@@ -154,7 +154,7 @@ def summarize_notes(request: NoteRequest, x_api_key: str = Header(None)):
     """
 
     response = client.chat.completions.create(
-        model="google/gemma-2-9b-it:free",
+        model="meta-llama/llama-3.1-8b-instruct",
         temperature=0.3,
         messages=[
             {
