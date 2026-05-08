@@ -154,7 +154,7 @@ def summarize_notes(request: NoteRequest, x_api_key: str = Header(None)):
     """
 
     response = client.chat.completions.create(
-        model="meta-llama/llama-3.3-70b-instruct:free",
+        model="deepseek/deepseek-chat-v3-0324:free",
         temperature=0.3,
         messages=[
             {
