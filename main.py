@@ -36,6 +36,7 @@ client = OpenAI(
 # Request model
 class NoteRequest(BaseModel):
     text: str
+    format: str = "bullet"
 
 @app.get("/")
 def home():
@@ -46,21 +47,124 @@ def summarize_notes(request: NoteRequest, x_api_key: str = Header(None)):
 
     verify_api_key(x_api_key)
 
+    summary_styles = {
+
+        "bullet": """
+    Create structured bullet-point notes.
+
+    Requirements:
+    - Use concise bullet points
+    - Keep only important information
+    - Remove repetition
+    - Preserve definitions, formulas, facts, and concepts
+    - Use sub-bullets when necessary
+    - Make it suitable for revision
+    """,
+
+        "short": """
+    Create a very concise summary.
+
+    Requirements:
+    - Maximum clarity in minimum words
+    - Use short paragraphs
+    - Focus only on core ideas
+    - Remove examples and unnecessary details
+    """,
+
+        "detailed": """
+    Create detailed study notes.
+
+    Requirements:
+    - Explain concepts clearly
+    - Preserve important details
+    - Use headings and subheadings
+    - Keep information well-structured
+    - Include examples if present in original text
+    - Make it useful for exam preparation
+    """,
+
+        "keypoints": """
+    Extract the most important key points only.
+
+    Requirements:
+    - Focus on critical concepts
+    - Keep output compact
+    - Prioritize facts, formulas, and definitions
+    - Avoid explanations unless necessary
+    """,
+
+        "beginner": """
+    Explain the content for a complete beginner.
+
+    Requirements:
+    - Use very simple language
+    - Break down difficult concepts
+    - Avoid technical jargon when possible
+    - Make explanations intuitive and easy to understand
+    - Keep learning-friendly formatting
+    """,
+
+        "qa": """
+    Convert the notes into study question-answer format.
+
+    Requirements:
+    - Generate meaningful questions
+    - Provide concise accurate answers
+    - Cover all major concepts
+    - Keep formatting clean and readable
+    """
+    }
+
+    selected_style = summary_styles.get(
+        request.format,
+        summary_styles["bullet"]
+    )
+
     prompt = f"""
-                Summarize the following text in simple bullet points.
-                Do NOT add any introduction like "Here is a summary".
-                Do NOT explain what you are doing.
-                Only output the summary.
-                
-                Text:
-                {request.text}
-                """
+    You are an expert AI academic summarizer and study assistant.
+
+    Your task is to analyze the provided notes carefully and generate high-quality educational summaries.
+
+    {selected_style}
+
+    Global Rules:
+    - Do NOT add introductions or conclusions
+    - Do NOT say phrases like:
+      "Here is the summary"
+      "Sure"
+      "I can help with that"
+    - Output ONLY the processed content
+    - Maintain factual accuracy
+    - Preserve important technical information
+    - Preserve chronological order when relevant
+    - Handle long multi-paragraph text correctly
+    - Ignore irrelevant filler sentences
+    - Make formatting visually clean
+    - Use markdown-style formatting when useful
+    - Avoid repeating the same idea multiple times
+
+    If the input contains:
+    - formulas → preserve them
+    - definitions → preserve them clearly
+    - steps/processes → keep sequential order
+    - comparisons → preserve comparison structure
+
+    Text to process:
+    {request.text}
+    """
 
     response = client.chat.completions.create(
-        model="meta-llama/llama-3.1-8b-instruct",
+        model="meta-llama/llama-3.3-70b-instruct:free",
+        temperature=0.3,
         messages=[
-            {"role": "system", "content": "You are a study assistant AI."},
-            {"role": "user", "content": prompt}
+            {
+                "role": "system",
+                "content": "You are an intelligent academic summarizer."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
         ]
     )
 
