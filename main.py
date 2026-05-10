@@ -126,18 +126,317 @@ def verify_api_key(
 # HOME
 # =========================
 
-@app.get("/")
+@app.get(
+    "/",
+    response_class=HTMLResponse,
+)
 def home():
 
-    return {
+    return """
 
-        "app": "Lumina AI",
+<!DOCTYPE html>
 
-        "status": "running",
+<html>
 
-        "message":
-            "Lumina AI backend is live",
-    }
+<head>
+
+    <title>
+        Lumina AI
+    </title>
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <style>
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+
+            font-family: Arial, sans-serif;
+
+            background:
+                linear-gradient(
+                    135deg,
+                    #eef2ff,
+                    #f8fafc
+                );
+
+            color: #111827;
+
+            min-height: 100vh;
+
+            display: flex;
+
+            justify-content: center;
+
+            align-items: center;
+
+            padding: 30px;
+        }
+
+        .container {
+
+            max-width: 950px;
+
+            width: 100%;
+
+            background: white;
+
+            border-radius: 28px;
+
+            padding: 60px;
+
+            box-shadow:
+                0 10px 40px rgba(
+                    0,
+                    0,
+                    0,
+                    0.08
+                );
+        }
+
+        .badge {
+
+            display: inline-block;
+
+            padding: 8px 16px;
+
+            background: #eef2ff;
+
+            color: #4f46e5;
+
+            border-radius: 999px;
+
+            font-size: 14px;
+
+            font-weight: bold;
+
+            margin-bottom: 24px;
+        }
+
+        h1 {
+
+            font-size: 58px;
+
+            line-height: 1.1;
+
+            margin-bottom: 20px;
+
+            color: #111827;
+        }
+
+        .highlight {
+
+            color: #4f46e5;
+        }
+
+        p {
+
+            font-size: 18px;
+
+            line-height: 1.8;
+
+            color: #475569;
+
+            max-width: 760px;
+        }
+
+        .buttons {
+
+            margin-top: 40px;
+
+            display: flex;
+
+            gap: 16px;
+
+            flex-wrap: wrap;
+        }
+
+        .btn {
+
+            text-decoration: none;
+
+            padding: 14px 28px;
+
+            border-radius: 14px;
+
+            font-weight: bold;
+
+            transition: 0.2s;
+        }
+
+        .primary {
+
+            background: #4f46e5;
+
+            color: white;
+        }
+
+        .primary:hover {
+
+            background: #4338ca;
+        }
+
+        .secondary {
+
+            background: #eef2ff;
+
+            color: #4f46e5;
+        }
+
+        .secondary:hover {
+
+            background: #dbe4ff;
+        }
+
+        .footer {
+
+            margin-top: 60px;
+
+            padding-top: 24px;
+
+            border-top:
+                1px solid #e5e7eb;
+
+            display: flex;
+
+            justify-content: space-between;
+
+            flex-wrap: wrap;
+
+            gap: 12px;
+        }
+
+        .footer a {
+
+            color: #4f46e5;
+
+            text-decoration: none;
+
+            font-weight: 600;
+        }
+
+        .footer a:hover {
+
+            text-decoration: underline;
+        }
+
+        .contact {
+
+            color: #64748b;
+        }
+
+        @media (max-width: 768px) {
+
+            .container {
+
+                padding: 36px;
+            }
+
+            h1 {
+
+                font-size: 42px;
+            }
+
+            p {
+
+                font-size: 16px;
+            }
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <div class="container">
+
+        <div class="badge">
+            AI Powered Productivity
+        </div>
+
+        <h1>
+
+            Meet
+            <span class="highlight">
+                Lumina AI
+            </span>
+
+        </h1>
+
+        <p>
+
+            Lumina is an intelligent AI-powered
+            note summarization platform designed
+            for students, professionals, and
+            productivity-focused users.
+
+            Generate structured summaries,
+            study notes, key points,
+            beginner explanations,
+            and question-answer formats
+            instantly using advanced AI.
+
+        </p>
+
+        <div class="buttons">
+
+            <a
+                href="/privacy-policy"
+                class="btn primary"
+            >
+                Privacy Policy
+            </a>
+
+            <a
+                href="/terms-and-conditions"
+                class="btn secondary"
+            >
+                Terms & Conditions
+            </a>
+
+        </div>
+
+        <div class="footer">
+
+            <div class="contact">
+
+                Contact:
+                lumina.ai.app@gmail.com
+
+            </div>
+
+            <div>
+
+                <a href="/privacy-policy">
+                    Privacy Policy
+                </a>
+
+                &nbsp; | &nbsp;
+
+                <a href="/terms-and-conditions">
+                    Terms
+                </a>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</body>
+
+</html>
+
+"""
 
 
 # =========================
