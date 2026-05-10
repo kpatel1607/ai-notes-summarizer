@@ -164,58 +164,231 @@ def health_check():
 def privacy_policy():
 
     return """
-    <html>
-    <head>
-        <title>Lumina Privacy Policy</title>
+<!DOCTYPE html>
 
-        <style>
+<html>
 
-            body {
-                font-family: Arial;
-                max-width: 850px;
-                margin: auto;
-                padding: 40px;
-                line-height: 1.7;
-                background: #f8f9fc;
-                color: #222;
-            }
+<head>
 
-            h1 {
-                color: #4f46e5;
-            }
+    <title>
+        Lumina Privacy Policy
+    </title>
 
-        </style>
-    </head>
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
 
-    <body>
+    <style>
 
-        <h1>Privacy Policy</h1>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-        <p>
-            Lumina collects user information such as
-            email address, username, and notes
-            to provide AI-powered summarization services.
+        body {
+
+            font-family: Arial, sans-serif;
+
+            background:
+                linear-gradient(
+                    135deg,
+                    #eef2ff,
+                    #f8fafc
+                );
+
+            color: #1e293b;
+
+            min-height: 100vh;
+
+            padding: 40px 20px;
+        }
+
+        .container {
+
+            max-width: 900px;
+
+            margin: auto;
+
+            background: white;
+
+            border-radius: 24px;
+
+            padding: 50px;
+
+            box-shadow:
+                0 10px 40px rgba(
+                    0,
+                    0,
+                    0,
+                    0.08
+                );
+        }
+
+        h1 {
+
+            font-size: 42px;
+
+            color: #4f46e5;
+
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+
+            color: #64748b;
+
+            margin-bottom: 40px;
+
+            font-size: 16px;
+        }
+
+        h2 {
+
+            margin-top: 35px;
+
+            margin-bottom: 15px;
+
+            color: #111827;
+
+            font-size: 24px;
+        }
+
+        p {
+
+            line-height: 1.8;
+
+            color: #475569;
+
+            font-size: 16px;
+        }
+
+        ul {
+
+            margin-top: 15px;
+            margin-left: 20px;
+        }
+
+        li {
+
+            margin-bottom: 12px;
+
+            line-height: 1.7;
+
+            color: #475569;
+        }
+
+        .footer {
+
+            margin-top: 50px;
+
+            padding-top: 20px;
+
+            border-top:
+                1px solid #e2e8f0;
+
+            color: #64748b;
+
+            font-size: 14px;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <div class="container">
+
+        <h1>
+            Privacy Policy
+        </h1>
+
+        <p class="subtitle">
+            Last updated: 2026
         </p>
 
         <p>
-            User data is securely stored and is never sold
-            to third parties.
+            Lumina respects your privacy and is committed
+            to protecting your personal information.
         </p>
 
-        <p>
-            By using Lumina, you agree to the collection
-            and processing of data necessary for
-            authentication and AI summarization.
-        </p>
+        <h2>
+            Information We Collect
+        </h2>
+
+        <ul>
+
+            <li>
+                Email address
+            </li>
+
+            <li>
+                Name and username
+            </li>
+
+            <li>
+                AI-generated summaries
+            </li>
+
+            <li>
+                Authentication information
+            </li>
+
+        </ul>
+
+        <h2>
+            How We Use Information
+        </h2>
 
         <p>
-            Contact:
+            We use your data to provide AI-powered
+            summarization services, improve app
+            performance, maintain security, and
+            personalize user experience.
+        </p>
+
+        <h2>
+            Data Protection
+        </h2>
+
+        <p>
+            Your information is securely stored and
+            protected using industry-standard security
+            practices.
+        </p>
+
+        <h2>
+            Third-Party Services
+        </h2>
+
+        <p>
+            Lumina may use services such as Firebase,
+            OpenRouter, and Google Authentication
+            for core functionality.
+        </p>
+
+        <h2>
+            Contact
+        </h2>
+
+        <p>
+            Email:
             lumina.ai.app@gmail.com
         </p>
 
-    </body>
-    </html>
-    """
+        <div class="footer">
+
+            © 2026 Lumina AI.
+            All rights reserved.
+
+        </div>
+
+    </div>
+
+</body>
+
+</html>
+"""
 
 
 # =========================
@@ -229,62 +402,238 @@ def privacy_policy():
 def terms_and_conditions():
 
     return """
-    <html>
+<!DOCTYPE html>
 
-    <head>
+<html>
 
-        <title>
-            Lumina Terms & Conditions
-        </title>
+<head>
 
-        <style>
+    <title>
+        Lumina Terms & Conditions
+    </title>
 
-            body {
-                font-family: Arial;
-                max-width: 850px;
-                margin: auto;
-                padding: 40px;
-                line-height: 1.7;
-                background: #f8f9fc;
-                color: #222;
-            }
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
 
-            h1 {
-                color: #4f46e5;
-            }
+    <style>
 
-        </style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-    </head>
+        body {
 
-    <body>
+            font-family: Arial, sans-serif;
 
-        <h1>Terms & Conditions</h1>
+            background:
+                linear-gradient(
+                    135deg,
+                    #eef2ff,
+                    #f8fafc
+                );
+
+            color: #1e293b;
+
+            min-height: 100vh;
+
+            padding: 40px 20px;
+        }
+
+        .container {
+
+            max-width: 900px;
+
+            margin: auto;
+
+            background: white;
+
+            border-radius: 24px;
+
+            padding: 50px;
+
+            box-shadow:
+                0 10px 40px rgba(
+                    0,
+                    0,
+                    0,
+                    0.08
+                );
+        }
+
+        h1 {
+
+            font-size: 42px;
+
+            color: #4f46e5;
+
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+
+            color: #64748b;
+
+            margin-bottom: 40px;
+
+            font-size: 16px;
+        }
+
+        h2 {
+
+            margin-top: 35px;
+
+            margin-bottom: 15px;
+
+            color: #111827;
+
+            font-size: 24px;
+        }
+
+        p {
+
+            line-height: 1.8;
+
+            color: #475569;
+
+            font-size: 16px;
+        }
+
+        ul {
+
+            margin-top: 15px;
+            margin-left: 20px;
+        }
+
+        li {
+
+            margin-bottom: 12px;
+
+            line-height: 1.7;
+
+            color: #475569;
+        }
+
+        .footer {
+
+            margin-top: 50px;
+
+            padding-top: 20px;
+
+            border-top:
+                1px solid #e2e8f0;
+
+            color: #64748b;
+
+            font-size: 14px;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <div class="container">
+
+        <h1>
+            Terms & Conditions
+        </h1>
+
+        <p class="subtitle">
+            Last updated: 2026
+        </p>
 
         <p>
-            By using Lumina, you agree to use the
-            application responsibly and lawfully.
+            By accessing and using Lumina,
+            you agree to the following terms.
         </p>
+
+        <h2>
+            Use of Service
+        </h2>
+
+        <p>
+            Lumina provides AI-powered note
+            summarization tools intended for
+            educational and productivity use.
+        </p>
+
+        <h2>
+            User Responsibilities
+        </h2>
+
+        <ul>
+
+            <li>
+                Users must not upload harmful,
+                illegal, or abusive content.
+            </li>
+
+            <li>
+                Users are responsible for
+                their generated outputs.
+            </li>
+
+            <li>
+                Abuse of the platform may
+                result in account suspension.
+            </li>
+
+        </ul>
+
+        <h2>
+            AI Generated Content
+        </h2>
 
         <p>
             AI-generated summaries may occasionally
-            contain inaccuracies.
+            contain inaccuracies. Users should
+            verify important information independently.
         </p>
 
-        <p>
-            Users are responsible for any uploaded
-            content and generated outputs.
-        </p>
+        <h2>
+            Account Security
+        </h2>
 
         <p>
-            Lumina reserves the right to update
+            Users are responsible for maintaining
+            the security of their accounts
+            and passwords.
+        </p>
+
+        <h2>
+            Changes to Terms
+        </h2>
+
+        <p>
+            Lumina reserves the right to modify
             these terms at any time.
         </p>
 
-    </body>
+        <h2>
+            Contact
+        </h2>
 
-    </html>
-    """
+        <p>
+            Email:
+            lumina.ai.app@gmail.com
+        </p>
+
+        <div class="footer">
+
+            © 2026 Lumina AI.
+            All rights reserved.
+
+        </div>
+
+    </div>
+
+</body>
+
+</html>
+"""
 
 
 # =========================
