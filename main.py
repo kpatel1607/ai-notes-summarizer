@@ -1,9 +1,15 @@
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from openai import OpenAI
 from dotenv import load_dotenv
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
 import os
 import re
 import html
@@ -18,6 +24,20 @@ BASE_URL = "https://ai-notes-summarizer-ck5l.onrender.com"
 API_KEY = os.getenv("API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "https://ai-notes-summarizer-ck5l.onrender.com,http://localhost:3000,http://localhost:5173,http://localhost:8080",
+).split(",")
+
+MAX_INPUT_LENGTH = int(
+    os.getenv("MAX_INPUT_LENGTH", "45000")
+)
+
+MODEL_NAME = os.getenv(
+    "OPENROUTER_MODEL",
+    "meta-llama/llama-3.1-8b-instruct",
+)
+
 if not API_KEY:
     print("WARNING: API_KEY missing")
 
@@ -25,19 +45,48 @@ if not OPENROUTER_API_KEY:
     print("WARNING: OPENROUTER_API_KEY missing")
 
 
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["120/minute"],
+)
+
 app = FastAPI(
     title="Lumina AI API",
     description="AI-powered OCR cleanup and academic summarization backend for Lumina.",
-    version="1.1.0",
+    version="1.2.0",
 )
+
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+
+@app.exception_handler(RateLimitExceeded)
+def rate_limit_handler(
+    request: Request,
+    exc: RateLimitExceeded,
+):
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Too many requests. Please try again shortly.",
+        },
+    )
 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        origin.strip()
+        for origin in ALLOWED_ORIGINS
+        if origin.strip()
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=[
+        "Content-Type",
+        "x-api-key",
+        "authorization",
+    ],
 )
 
 
@@ -48,18 +97,28 @@ client = OpenAI(
 
 
 class NoteRequest(BaseModel):
-    text: str = Field(..., min_length=5, max_length=45000)
-    format: str = "bullet"
+    text: str = Field(
+        ...,
+        min_length=5,
+        max_length=MAX_INPUT_LENGTH,
+    )
+
+    format: str = Field(
+        default="bullet",
+        max_length=30,
+    )
 
 
-def verify_api_key(x_api_key: str = Header(None)):
+def verify_api_key(
+    x_api_key: str = Header(None),
+):
     if not API_KEY:
         raise HTTPException(
             status_code=500,
             detail="Server API key is not configured",
         )
 
-    if x_api_key != API_KEY:
+    if not x_api_key or x_api_key != API_KEY:
         raise HTTPException(
             status_code=403,
             detail="Invalid API Key",
@@ -71,10 +130,8 @@ def clean_input_text(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[^\S\n]+", " ", text)
-    text = text.strip()
-
-    # Remove repeated OCR noise characters
     text = re.sub(r"([^\w\s])\1{4,}", r"\1", text)
+    text = text.strip()
 
     return text
 
@@ -88,6 +145,8 @@ def clean_ai_output(text: str) -> str:
     unwanted_starts = [
         "Here is the summary:",
         "Here's the summary:",
+        "Here are the notes:",
+        "Here is the cleaned version:",
         "Sure,",
         "Sure.",
         "Of course,",
@@ -101,11 +160,34 @@ def clean_ai_output(text: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]+", " ", text)
     text = text.replace("• •", "•")
+    text = text.strip()
 
-    return text.strip()
+    return text
 
 
-def legal_page(title: str, subtitle: str, body: str) -> str:
+def validate_format(format_value: str) -> str:
+    allowed = {
+        "bullet",
+        "short",
+        "detailed",
+        "keypoints",
+        "beginner",
+        "qa",
+    }
+
+    cleaned = format_value.lower().strip()
+
+    if cleaned not in allowed:
+        return "bullet"
+
+    return cleaned
+
+
+def legal_page(
+    title: str,
+    subtitle: str,
+    body: str,
+) -> str:
     return f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -420,7 +502,8 @@ def health_check():
     return {
         "app": APP_NAME,
         "status": "healthy",
-        "version": "1.1.0",
+        "version": "1.2.0",
+        "model": MODEL_NAME,
     }
 
 
@@ -471,8 +554,8 @@ def privacy_policy():
 
         <h2>User Control</h2>
         <p>
-            Users may delete summaries from inside the app. For account or data
-            deletion requests, contact us at <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>.
+            Users may delete summaries from inside the app. Users may also delete
+            their account and saved data from the Profile section.
         </p>
 
         <h2>Contact</h2>
@@ -521,6 +604,13 @@ def terms_and_conditions():
         <p>
             Users are responsible for maintaining the confidentiality of their login
             credentials and account access.
+        </p>
+
+        <h2>Data Deletion</h2>
+        <p>
+            Users may delete their account and associated saved data from the app's
+            Profile section. Some third-party providers may retain limited records
+            according to their own policies.
         </p>
 
         <h2>Availability</h2>
@@ -618,8 +708,10 @@ Output rules:
 
 
 @app.post("/summarize")
+@limiter.limit("20/minute")
 def summarize_notes(
-    request: NoteRequest,
+    request: Request,
+    note_request: NoteRequest,
     x_api_key: str = Header(None),
 ):
     verify_api_key(x_api_key)
@@ -630,7 +722,7 @@ def summarize_notes(
             detail="AI provider API key is not configured",
         )
 
-    cleaned_text = clean_input_text(request.text)
+    cleaned_text = clean_input_text(note_request.text)
 
     if len(cleaned_text) < 5:
         raise HTTPException(
@@ -638,8 +730,18 @@ def summarize_notes(
             detail="Input text is too short",
         )
 
+    if len(cleaned_text) > MAX_INPUT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail="Input text is too large",
+        )
+
+    selected_format = validate_format(
+        note_request.format,
+    )
+
     selected_style = summary_styles.get(
-        request.format.lower().strip(),
+        selected_format,
         summary_styles["bullet"],
     )
 
@@ -680,7 +782,7 @@ User text:
 
     try:
         response = client.chat.completions.create(
-            model="meta-llama/llama-3.1-8b-instruct",
+            model=MODEL_NAME,
             temperature=0.15,
             top_p=0.8,
             max_tokens=1800,
@@ -712,7 +814,7 @@ User text:
         return JSONResponse(
             content={
                 "summary": summary,
-                "format": request.format,
+                "format": selected_format,
                 "inputLength": len(cleaned_text),
             }
         )
@@ -727,6 +829,12 @@ User text:
             raise HTTPException(
                 status_code=502,
                 detail="Selected AI model is unavailable. Please change the model.",
+            )
+
+        if "rate" in error_message.lower():
+            raise HTTPException(
+                status_code=429,
+                detail="AI provider is busy. Please try again shortly.",
             )
 
         raise HTTPException(
