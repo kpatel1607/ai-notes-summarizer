@@ -75,12 +75,8 @@ def rate_limit_handler(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        origin.strip()
-        for origin in ALLOWED_ORIGINS
-        if origin.strip()
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=[
         "Content-Type",
