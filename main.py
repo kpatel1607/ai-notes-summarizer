@@ -18,7 +18,7 @@ import html
 load_dotenv()
 
 APP_NAME = "Lumina AI"
-CONTACT_EMAIL = "lumina.ai.app@gmail.com"
+CONTACT_EMAIL = "lumina.support.ai@gmail.com"
 BASE_URL = "https://ai-notes-summarizer-ck5l.onrender.com"
 
 API_KEY = os.getenv("API_KEY")
@@ -311,8 +311,10 @@ def home():
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>Lumina AI</title>
+    <title>Lumina AI - AI Notes Summarizer</title>
+    <meta name="description" content="Lumina AI converts notes, PDFs, scanned pages, and images into clean AI-powered summaries for study and productivity.">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <style>
         * {{
             margin: 0;
@@ -325,19 +327,16 @@ def home():
             background: linear-gradient(135deg, #eef2ff, #f8fafc);
             color: #111827;
             min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 30px;
+            padding: 32px 18px;
         }}
 
         .container {{
-            max-width: 980px;
-            width: 100%;
-            background: white;
-            border-radius: 30px;
+            max-width: 1080px;
+            margin: auto;
+            background: #ffffff;
+            border-radius: 32px;
             padding: 64px;
-            box-shadow: 0 12px 45px rgba(15, 23, 42, 0.08);
+            box-shadow: 0 14px 50px rgba(15, 23, 42, 0.08);
         }}
 
         .badge {{
@@ -352,38 +351,62 @@ def home():
         }}
 
         h1 {{
-            font-size: 58px;
+            font-size: 56px;
             line-height: 1.1;
-            margin-bottom: 20px;
+            margin-bottom: 22px;
         }}
 
         .highlight {{
             color: #4f46e5;
         }}
 
-        p {{
-            font-size: 18px;
+        .hero-text {{
+            font-size: 19px;
             line-height: 1.8;
             color: #475569;
-            max-width: 780px;
+            max-width: 820px;
+        }}
+
+        .section-title {{
+            margin-top: 46px;
+            font-size: 28px;
+            font-weight: 800;
         }}
 
         .features {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 16px;
-            margin-top: 36px;
+            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+            gap: 18px;
+            margin-top: 22px;
         }}
 
         .feature {{
             background: #f8fafc;
-            padding: 20px;
-            border-radius: 18px;
+            padding: 22px;
+            border-radius: 20px;
             border: 1px solid #e5e7eb;
         }}
 
         .feature strong {{
+            display: block;
             color: #111827;
+            font-size: 17px;
+            margin-bottom: 8px;
+        }}
+
+        .feature p {{
+            color: #475569;
+            line-height: 1.7;
+            font-size: 15px;
+        }}
+
+        .info {{
+            margin-top: 28px;
+            padding: 24px;
+            border-radius: 22px;
+            background: #eef2ff;
+            color: #3730a3;
+            line-height: 1.8;
         }}
 
         .buttons {{
@@ -395,9 +418,9 @@ def home():
 
         .btn {{
             text-decoration: none;
-            padding: 14px 28px;
-            border-radius: 14px;
-            font-weight: 700;
+            padding: 15px 28px;
+            border-radius: 15px;
+            font-weight: 800;
         }}
 
         .primary {{
@@ -412,79 +435,127 @@ def home():
 
         .footer {{
             margin-top: 56px;
-            padding-top: 22px;
+            padding-top: 24px;
             border-top: 1px solid #e5e7eb;
             display: flex;
             justify-content: space-between;
             flex-wrap: wrap;
-            gap: 12px;
+            gap: 14px;
             color: #64748b;
+            font-size: 14px;
         }}
 
         .footer a {{
             color: #4f46e5;
             text-decoration: none;
-            font-weight: 600;
+            font-weight: 700;
+        }}
+
+        .footer a:hover {{
+            text-decoration: underline;
         }}
 
         @media (max-width: 768px) {{
             .container {{
-                padding: 36px;
+                padding: 34px;
             }}
 
             h1 {{
-                font-size: 42px;
+                font-size: 38px;
             }}
 
-            p {{
+            .hero-text {{
                 font-size: 16px;
             }}
         }}
     </style>
 </head>
+
 <body>
     <main class="container">
         <div class="badge">AI Powered Study Assistant</div>
 
         <h1>
-            Meet <span class="highlight">Lumina AI</span>
+            Lumina AI helps you turn
+            <span class="highlight">notes into study-ready summaries</span>.
         </h1>
 
-        <p>
-            Lumina AI helps students and productivity-focused users convert notes,
-            PDFs, scanned pages, and raw study material into clean summaries,
-            revision notes, key points, beginner explanations, and question-answer
-            study formats.
+        <p class="hero-text">
+            Lumina AI is an educational productivity app that helps users convert
+            raw notes, PDFs, scanned pages, images, and camera-captured text into
+            clean AI-generated summaries, revision notes, key points, beginner
+            explanations, and question-answer study formats.
         </p>
+
+        <h2 class="section-title">What Lumina AI Does</h2>
 
         <section class="features">
             <div class="feature">
-                <strong>OCR Cleanup</strong>
-                <p>Processes messy extracted text into readable study material.</p>
+                <strong>PDF Note Processing</strong>
+                <p>
+                    Users can upload PDF study material and extract text for AI-powered summarization.
+                </p>
             </div>
 
             <div class="feature">
-                <strong>Academic Summaries</strong>
-                <p>Creates structured notes while preserving definitions, formulas, and facts.</p>
+                <strong>Image & Camera OCR</strong>
+                <p>
+                    Lumina can extract text from uploaded images and camera scans of handwritten or printed notes.
+                </p>
             </div>
 
             <div class="feature">
-                <strong>Study Formats</strong>
-                <p>Supports bullet, short, detailed, beginner, key-point, and Q&A styles.</p>
+                <strong>AI Summaries</strong>
+                <p>
+                    The app generates clean summaries, bullet notes, detailed notes, key points, beginner explanations, and Q&A formats.
+                </p>
+            </div>
+
+            <div class="feature">
+                <strong>Saved History</strong>
+                <p>
+                    Logged-in users can save summaries, organize them into folders, mark favorites, and access history securely.
+                </p>
+            </div>
+
+            <div class="feature">
+                <strong>Export & Share</strong>
+                <p>
+                    Users can copy, share, and export generated study summaries for later revision.
+                </p>
+            </div>
+
+            <div class="feature">
+                <strong>Account Control</strong>
+                <p>
+                    Users can manage their account, logout, and delete their account and saved data from inside the app.
+                </p>
             </div>
         </section>
+
+        <div class="info">
+            Lumina AI is designed for students, learners, and productivity-focused users.
+            It is not a replacement for professional, medical, legal, or academic advice.
+            Users should verify important information independently.
+        </div>
 
         <div class="buttons">
             <a href="/privacy-policy" class="btn primary">Privacy Policy</a>
             <a href="/terms-and-conditions" class="btn secondary">Terms & Conditions</a>
+            <a href="/health" class="btn secondary">API Health</a>
         </div>
 
         <div class="footer">
-            <div>Contact: {CONTACT_EMAIL}</div>
+            <div>
+                © 2026 Lumina AI. All rights reserved.
+                <br>
+                Support: <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>
+            </div>
+
             <div>
                 <a href="/privacy-policy">Privacy Policy</a>
                 &nbsp; | &nbsp;
-                <a href="/terms-and-conditions">Terms</a>
+                <a href="/terms-and-conditions">Terms & Conditions</a>
             </div>
         </div>
     </main>
