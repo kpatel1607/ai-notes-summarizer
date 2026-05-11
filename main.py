@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from openai import OpenAI
 from dotenv import load_dotenv
+from fastapi.staticfiles import StaticFiles
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -13,16 +14,35 @@ from slowapi.middleware import SlowAPIMiddleware
 import os
 import re
 import html
-
+import json
+import firebase_admin
+from firebase_admin import credentials, auth as firebase_auth
 
 load_dotenv()
 
 APP_NAME = "Lumina AI"
-CONTACT_EMAIL = "lumina.support.ai@gmail.com"
-BASE_URL = "https://ai-notes-summarizer-ck5l.onrender.com"
+CONTACT_EMAIL = "support@lumina-ai.co.in"
+BASE_URL = "https://www.lumina-ai.co.in"
+
+
 
 API_KEY = os.getenv("API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+FIREBASE_SERVICE_ACCOUNT_JSON = os.getenv(
+    "FIREBASE_SERVICE_ACCOUNT_JSON"
+)
+
+if FIREBASE_SERVICE_ACCOUNT_JSON:
+    firebase_credentials = credentials.Certificate(
+        json.loads(FIREBASE_SERVICE_ACCOUNT_JSON)
+    )
+
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(firebase_credentials)
+else:
+    print("WARNING: FIREBASE_SERVICE_ACCOUNT_JSON missing")
+
 
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
@@ -58,6 +78,7 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.exception_handler(RateLimitExceeded)
@@ -75,7 +96,10 @@ def rate_limit_handler(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5000",
+                   "https://www.lumina-ai.co.in",
+                   "https://lumina-ai.co.in"
+                   ],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=[
@@ -118,6 +142,40 @@ def verify_api_key(
         raise HTTPException(
             status_code=403,
             detail="Invalid API Key",
+        )
+
+def verify_firebase_user(
+    authorization: str = Header(None),
+):
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Please login first",
+        )
+
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authorization format",
+        )
+
+    id_token = authorization.replace(
+        "Bearer ",
+        "",
+        1,
+    ).strip()
+
+    try:
+        decoded_token = firebase_auth.verify_id_token(
+            id_token
+        )
+
+        return decoded_token
+
+    except Exception:
+        raise HTTPException(
+            status_code=401,
+            detail="Login session expired. Please login again.",
         )
 
 
@@ -540,9 +598,9 @@ def home():
         </div>
 
         <div class="buttons">
-            <a href="/privacy-policy" class="btn primary">Privacy Policy</a>
+            <a href="/download-app" class="btn primary">Download App</a>
+            <a href="/privacy-policy" class="btn secondary">Privacy Policy</a>
             <a href="/terms-and-conditions" class="btn secondary">Terms & Conditions</a>
-            <a href="/health" class="btn secondary">API Health</a>
         </div>
 
         <div class="footer">
@@ -573,6 +631,82 @@ def health_check():
         "model": MODEL_NAME,
     }
 
+@app.get("/download-app", response_class=HTMLResponse)
+def download_app():
+    return """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <title>Download Lumina AI</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    background: #f8fafc;
+                    color: #111827;
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 24px;
+                }
+        
+                .card {
+                    max-width: 560px;
+                    background: white;
+                    padding: 40px;
+                    border-radius: 28px;
+                    box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08);
+                    text-align: center;
+                }
+        
+                h1 {
+                    font-size: 34px;
+                    margin-bottom: 14px;
+                }
+        
+                p {
+                    color: #475569;
+                    line-height: 1.7;
+                    margin-bottom: 28px;
+                }
+        
+                .btn {
+                    display: inline-block;
+                    background: #4f46e5;
+                    color: white;
+                    text-decoration: none;
+                    padding: 15px 28px;
+                    border-radius: 16px;
+                    font-weight: 700;
+                }
+        
+                .note {
+                    margin-top: 22px;
+                    font-size: 14px;
+                    color: #64748b;
+                }
+            </style>
+        </head>
+        <body>
+            <main class="card">
+                <h1>Download Lumina AI</h1>
+                <p>
+                    Lumina AI helps you convert PDFs, images, camera scans,
+                    and notes into clean AI-powered study summaries.
+                </p>
+        
+                <a class="btn" href="/static/lumina-ai.apk" download>
+                    Download APK
+                </a>
+        
+                <p class="note">
+                    Play Store version coming soon.
+                </p>
+            </main>
+        </body>
+        </html>
+        """
 
 @app.get("/privacy-policy", response_class=HTMLResponse)
 def privacy_policy():
@@ -779,9 +913,19 @@ Output rules:
 def summarize_notes(
     request: Request,
     note_request: NoteRequest,
-    x_api_key: str = Header(None),
+    authorization: str = Header(None),
 ):
-    verify_api_key(x_api_key)
+    decoded_user = verify_firebase_user(
+        authorization,
+    )
+
+    user_uid = decoded_user.get("uid")
+
+    if not user_uid:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Firebase user",
+        )
 
     if not OPENROUTER_API_KEY:
         raise HTTPException(
