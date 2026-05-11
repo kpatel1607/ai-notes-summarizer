@@ -16,7 +16,8 @@ import re
 import html
 import json
 import firebase_admin
-from firebase_admin import credentials, auth as firebase_auth
+from firebase_admin import credentials, auth as firebase_auth, firestore
+from datetime import datetime, timezone
 
 load_dotenv()
 
@@ -26,7 +27,7 @@ BASE_URL = "https://www.lumina-ai.co.in"
 
 
 
-API_KEY = os.getenv("API_KEY")
+# API_KEY = os.getenv("API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 FIREBASE_SERVICE_ACCOUNT_JSON = os.getenv(
@@ -53,13 +54,17 @@ MAX_INPUT_LENGTH = int(
     os.getenv("MAX_INPUT_LENGTH", "45000")
 )
 
+DAILY_FREE_LIMIT = int(
+    os.getenv("DAILY_FREE_LIMIT", "15")
+)
+
 MODEL_NAME = os.getenv(
     "OPENROUTER_MODEL",
     "meta-llama/llama-3.1-8b-instruct",
 )
 
-if not API_KEY:
-    print("WARNING: API_KEY missing")
+# if not API_KEY:
+#     print("WARNING: API_KEY missing")
 
 if not OPENROUTER_API_KEY:
     print("WARNING: OPENROUTER_API_KEY missing")
@@ -104,7 +109,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=[
         "Content-Type",
-        "x-api-key",
         "authorization",
     ],
 )
@@ -129,20 +133,20 @@ class NoteRequest(BaseModel):
     )
 
 
-def verify_api_key(
-    x_api_key: str = Header(None),
-):
-    if not API_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="Server API key is not configured",
-        )
-
-    if not x_api_key or x_api_key != API_KEY:
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid API Key",
-        )
+# def verify_api_key(
+#     x_api_key: str = Header(None),
+# ):
+    # if not API_KEY:
+    #     raise HTTPException(
+    #         status_code=500,
+    #         detail="Server API key is not configured",
+    #     )
+    #
+    # if not x_api_key or x_api_key != API_KEY:
+    #     raise HTTPException(
+    #         status_code=403,
+    #         detail="Invalid API Key")
+    #
 
 def verify_firebase_user(
     authorization: str = Header(None),
@@ -177,6 +181,8 @@ def verify_firebase_user(
             status_code=401,
             detail="Login session expired. Please login again.",
         )
+
+firestore_db = firestore.client()
 
 
 def clean_input_text(text: str) -> str:
@@ -907,6 +913,64 @@ Output rules:
 """,
 }
 
+def check_and_increment_daily_usage(
+    user_uid: str,
+):
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    usage_ref = firestore_db.collection("usage").document(
+        f"{user_uid}_{today}"
+    )
+
+    transaction = firestore_db.transaction()
+
+    @firestore.transactional
+    def update_usage(transaction, usage_ref):
+        snapshot = usage_ref.get(
+            transaction=transaction,
+        )
+
+        if snapshot.exists:
+            data = snapshot.to_dict() or {}
+            current_count = data.get("count", 0)
+
+            if current_count >= DAILY_FREE_LIMIT:
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        f"Daily free limit reached. "
+                        f"You can generate {DAILY_FREE_LIMIT} summaries per day."
+                    ),
+                )
+
+            transaction.update(
+                usage_ref,
+                {
+                    "count": current_count + 1,
+                    "updatedAt": firestore.SERVER_TIMESTAMP,
+                },
+            )
+
+            return current_count + 1
+
+        transaction.set(
+            usage_ref,
+            {
+                "uid": user_uid,
+                "date": today,
+                "count": 1,
+                "limit": DAILY_FREE_LIMIT,
+                "createdAt": firestore.SERVER_TIMESTAMP,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            },
+        )
+
+        return 1
+
+    return update_usage(
+        transaction,
+        usage_ref,
+    )
 
 @app.post("/summarize")
 @limiter.limit("20/minute")
@@ -926,6 +990,7 @@ def summarize_notes(
             status_code=401,
             detail="Invalid Firebase user",
         )
+
 
     if not OPENROUTER_API_KEY:
         raise HTTPException(
@@ -1021,6 +1086,10 @@ User text:
                 status_code=500,
                 detail="AI returned empty summary",
             )
+
+        check_and_increment_daily_usage(
+            user_uid,
+        )
 
         return JSONResponse(
             content={
