@@ -176,10 +176,17 @@ def verify_firebase_user(
 
         return decoded_token
 
-    except Exception:
+
+    except Exception as e:
+
+        print("Firebase token verification error:", str(e))
+
         raise HTTPException(
+
             status_code=401,
-            detail="Login session expired. Please login again.",
+
+            detail=str(e),
+
         )
 
 firestore_db = firestore.client()
