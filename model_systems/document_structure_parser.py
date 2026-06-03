@@ -1,28 +1,30 @@
 import re
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-from paddleocr import PPStructure
-from pathlib import Path
 from PIL import Image
+
+try:
+    from paddleocr import PPStructure
+except ImportError:
+    PPStructure = None
 
 
 class DocumentStructureParser:
     def __init__(self):
-        try:
-            self.pp_structure = PPStructure(
-                show_log=False,
-                lang="en",
-            )
-        except Exception as e:
-            print(f"PPStructure initialization failed: {e}")
-            self.pp_structure = None
+        self.pp_structure = None
 
+        if PPStructure is not None:
+            try:
+                self.pp_structure = PPStructure(
+                    show_log=False,
+                    lang="en",
+                )
+            except Exception as e:
+                print(f"PPStructure initialization failed: {e}")
+                self.pp_structure = None
 
-    def _is_valid_heading(
-        self,
-        line: str,
-    ) -> bool:
-
+    def _is_valid_heading(self, line: str) -> bool:
         line = line.strip()
 
         if not line:
@@ -39,27 +41,21 @@ class DocumentStructureParser:
         if line.endswith((".", ",", ";", ":")):
             return False
 
-        invalid_starts = [
-            "1.",
-            "2.",
-            "3.",
-            "4.",
-            "5.",
-        ]
+        invalid_starts = ["1.", "2.", "3.", "4.", "5."]
 
         lower = line.lower().strip()
 
         for start in invalid_starts:
             if lower.startswith(start):
                 if any(
-                        keyword in lower
-                        for keyword in [
-                            "table",
-                            "figure",
-                            "spacing",
-                            "paragraph",
-                            "alignment",
-                        ]
+                    keyword in lower
+                    for keyword in [
+                        "table",
+                        "figure",
+                        "spacing",
+                        "paragraph",
+                        "alignment",
+                    ]
                 ):
                     return False
 
@@ -77,10 +73,6 @@ class DocumentStructureParser:
             "times new roman",
         ]
 
-
-
-        lower = line.lower()
-
         invalid_count = sum(
             1
             for keyword in invalid_keywords
@@ -95,13 +87,11 @@ class DocumentStructureParser:
 
         return True
 
-
     def remove_repeated_page_noise(
         self,
         text: str,
         min_repeat: int = 2,
     ) -> Dict[str, Any]:
-
         if not text:
             return {
                 "cleaned_text": "",
@@ -169,16 +159,8 @@ class DocumentStructureParser:
             "noise_removed": bool(repeated_noise),
         }
 
-    def _normalize_noise_line(
-        self,
-        line: str,
-    ) -> str:
-
-        line = re.sub(
-            r"\s+",
-            " ",
-            line,
-        ).strip()
+    def _normalize_noise_line(self, line: str) -> str:
+        line = re.sub(r"\s+", " ", line).strip()
 
         line = re.sub(
             r"\bpage\s+\d+\b",
@@ -195,11 +177,7 @@ class DocumentStructureParser:
 
         return line
 
-    def _is_noise_candidate(
-        self,
-        line: str,
-    ) -> bool:
-
+    def _is_noise_candidate(self, line: str) -> bool:
         if not line:
             return False
 
@@ -228,14 +206,8 @@ class DocumentStructureParser:
 
         return False
 
-    # =========================================
-    # RULE-BASED TEXT STRUCTURE PARSER
-    # =========================================
-
     def parse(self, text: str) -> Dict[str, Any]:
-        noise_result = self.remove_repeated_page_noise(
-            text,
-        )
+        noise_result = self.remove_repeated_page_noise(text)
 
         cleaned = noise_result["cleaned_text"].strip()
 
@@ -299,22 +271,17 @@ class DocumentStructureParser:
             },
         }
 
-    # =========================================
-    # PP-STRUCTURE IMAGE/PAGE PARSER
-    # =========================================
-
     def parse_document_image(
         self,
         image_path: str,
     ) -> Dict[str, Any]:
-
         if self.pp_structure is None:
             return {
                 "parser_type": "ppstructure_unavailable",
                 "layout_blocks": [],
                 "metadata": {
                     "layout_block_count": 0,
-                    "error": "PPStructure not initialized",
+                    "error": "PPStructure is not installed or not initialized.",
                 },
             }
 
@@ -347,9 +314,7 @@ class DocumentStructureParser:
                     },
                 }
 
-            result = self.pp_structure(
-                str(rgb_image_path),
-            )
+            result = self.pp_structure(str(rgb_image_path))
 
             layout_blocks = []
 
@@ -406,7 +371,6 @@ class DocumentStructureParser:
         text_structure: Dict[str, Any],
         layout_structure: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-
         if not layout_structure:
             return text_structure
 
@@ -414,9 +378,9 @@ class DocumentStructureParser:
 
         merged["layout_blocks"] = layout_structure.get(
             "layout_blocks",
-
             [],
         )
+
         merged["layout_sections"] = self.extract_layout_sections(
             layout_structure,
         )
@@ -444,7 +408,6 @@ class DocumentStructureParser:
         self,
         layout_structure: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
-
         sections = []
 
         layout_blocks = layout_structure.get(
@@ -453,7 +416,6 @@ class DocumentStructureParser:
         )
 
         for index, block in enumerate(layout_blocks):
-
             text = block.get("text", "").strip()
 
             if not text:
@@ -471,9 +433,7 @@ class DocumentStructureParser:
                         [],
                     ),
                     "content": text,
-                    "word_count": len(
-                        text.split()
-                    ),
+                    "word_count": len(text.split()),
                 }
             )
 
@@ -483,7 +443,6 @@ class DocumentStructureParser:
         self,
         raw_res: Any,
     ) -> str:
-
         extracted_lines = []
 
         if isinstance(raw_res, str):
@@ -493,21 +452,20 @@ class DocumentStructureParser:
             for item in raw_res:
                 if isinstance(item, dict):
                     text = item.get("text") or item.get("res") or ""
+
                     if text:
                         extracted_lines.append(str(text))
+
                 elif isinstance(item, str):
                     extracted_lines.append(item)
 
         if isinstance(raw_res, dict):
             text = raw_res.get("text") or raw_res.get("res") or ""
+
             if text:
                 extracted_lines.append(str(text))
 
         return " ".join(extracted_lines).strip()
-
-    # =========================================
-    # RULE METHODS
-    # =========================================
 
     def _normalize_inline_headings(self, text: str) -> str:
         normalized = text
@@ -527,11 +485,7 @@ class DocumentStructureParser:
 
         return normalized.strip()
 
-    def _detect_title(
-            self,
-            lines: List[str],
-    ) -> str:
-
+    def _detect_title(self, lines: List[str]) -> str:
         if not lines:
             return ""
 
@@ -539,41 +493,36 @@ class DocumentStructureParser:
 
         word_count = len(first.split())
 
-        # Too long → probably paragraph
         if word_count > 12:
             return ""
 
-        # Ends with sentence punctuation → likely not title
         if first.endswith((".", "?", "!")):
             return ""
 
-        # Lowercase-heavy sentence → not title
         lowercase_ratio = (
-                sum(1 for c in first if c.islower())
-                / max(len(first), 1)
+            sum(1 for c in first if c.islower())
+            / max(len(first), 1)
         )
 
         if lowercase_ratio > 0.65:
             return ""
 
-        # Valid heading patterns
         title_patterns = [
-
             r"^(Chapter|Unit|Section)\s+\d+",
-
             r"^[A-Z][A-Z0-9 /:&\-\(\)]{4,80}$",
-
             r"^[A-Z][A-Za-z0-9 ,:&\-\(\)]{3,80}$",
         ]
 
         for pattern in title_patterns:
-
             if re.match(pattern, first):
                 return first
 
         return ""
 
-    def _detect_sections(self, lines: List[str]) -> List[Dict[str, Any]]:
+    def _detect_sections(
+        self,
+        lines: List[str],
+    ) -> List[Dict[str, Any]]:
         sections = []
         current_section = None
 
@@ -587,14 +536,12 @@ class DocumentStructureParser:
         )
 
         for line in lines:
-            # word_count = len(line.split())
-
             is_heading = (
-                    (
-                            bool(heading_pattern.match(line))
-                            or bool(numbered_heading_pattern.match(line))
-                    )
-                    and self._is_valid_heading(line)
+                (
+                    bool(heading_pattern.match(line))
+                    or bool(numbered_heading_pattern.match(line))
+                )
+                and self._is_valid_heading(line)
             )
 
             if is_heading:
@@ -615,7 +562,10 @@ class DocumentStructureParser:
 
         return sections
 
-    def _detect_questions(self, lines: List[str]) -> List[str]:
+    def _detect_questions(
+        self,
+        lines: List[str],
+    ) -> List[str]:
         questions = []
 
         question_pattern = re.compile(
@@ -646,14 +596,20 @@ class DocumentStructureParser:
 
         return questions
 
-    def _detect_bullets(self, lines: List[str]) -> List[str]:
+    def _detect_bullets(
+        self,
+        lines: List[str],
+    ) -> List[str]:
         return [
             line
             for line in lines
             if line.startswith(("-", "•", "*", "–"))
         ]
 
-    def _detect_numbered_items(self, text: str) -> List[Dict[str, str]]:
+    def _detect_numbered_items(
+        self,
+        text: str,
+    ) -> List[Dict[str, str]]:
         pattern = re.compile(
             r"(?<!\d)(\d{1,2})\s+([A-Z][A-Za-z /&\-]{3,60})\s+[–-]\s+(.+?)(?=\s+\d{1,2}\s+[A-Z][A-Za-z /&\-]{3,60}\s+[–-]|\Z)",
             re.DOTALL,
@@ -668,7 +624,10 @@ class DocumentStructureParser:
             for match in pattern.finditer(text)
         ]
 
-    def _detect_roman_items(self, text: str) -> List[str]:
+    def _detect_roman_items(
+        self,
+        text: str,
+    ) -> List[str]:
         pattern = re.compile(
             r"\b(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII)\.\s+[A-Z][A-Za-z’' /&\-]+"
         )
@@ -678,7 +637,10 @@ class DocumentStructureParser:
             for match in pattern.finditer(text)
         ]
 
-    def _detect_key_value_fields(self, text: str) -> List[Dict[str, str]]:
+    def _detect_key_value_fields(
+        self,
+        text: str,
+    ) -> List[Dict[str, str]]:
         pattern = re.compile(
             r"\b([A-Z][A-Z /-]{3,40})\s*:\s*([^:]{1,120})(?=\s+[A-Z][A-Z /-]{3,40}\s*:|\Z)"
         )
@@ -691,7 +653,10 @@ class DocumentStructureParser:
             for match in pattern.finditer(text)
         ]
 
-    def _detect_paragraphs(self, text: str) -> List[str]:
+    def _detect_paragraphs(
+        self,
+        text: str,
+    ) -> List[str]:
         paragraphs = [
             para.strip()
             for para in re.split(r"\n\s*\n", text)
