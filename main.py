@@ -1,10 +1,10 @@
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from openai import OpenAI
 from dotenv import load_dotenv
-from fastapi.staticfiles import StaticFiles
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -19,16 +19,16 @@ import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth, firestore
 from datetime import datetime, timezone
 
+from model_systems.pipeline_router import PipelineRouter
+
+
 load_dotenv()
 
 APP_NAME = "Lumina AI"
 CONTACT_EMAIL = "support@lumina-ai.co.in"
 BASE_URL = "https://www.lumina-ai.co.in"
 
-
-
-# API_KEY = os.getenv("API_KEY")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_API_KEY = os.getenv("LUMINA_API_KEY")
 
 FIREBASE_SERVICE_ACCOUNT_JSON = os.getenv(
     "FIREBASE_SERVICE_ACCOUNT_JSON"
@@ -63,9 +63,6 @@ MODEL_NAME = os.getenv(
     "meta-llama/llama-3.1-8b-instruct",
 )
 
-# if not API_KEY:
-#     print("WARNING: API_KEY missing")
-
 if not OPENROUTER_API_KEY:
     print("WARNING: OPENROUTER_API_KEY missing")
 
@@ -78,7 +75,7 @@ limiter = Limiter(
 app = FastAPI(
     title="Lumina AI API",
     description="AI-powered OCR cleanup and academic summarization backend for Lumina.",
-    version="1.2.0",
+    version="2.0.0",
 )
 
 app.state.limiter = limiter
@@ -101,10 +98,14 @@ def rate_limit_handler(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5000",
-                   "https://www.lumina-ai.co.in",
-                   "https://lumina-ai.co.in"
-                   ],
+    allow_origins=[
+        "http://localhost:5000",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "https://www.lumina-ai.co.in",
+        "https://lumina-ai.co.in",
+    ],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=[
@@ -118,6 +119,8 @@ client = OpenAI(
     api_key=OPENROUTER_API_KEY,
     base_url="https://openrouter.ai/api/v1",
 )
+
+lumina_router = PipelineRouter()
 
 
 class NoteRequest(BaseModel):
@@ -133,20 +136,23 @@ class NoteRequest(BaseModel):
     )
 
 
-# def verify_api_key(
-#     x_api_key: str = Header(None),
-# ):
-    # if not API_KEY:
-    #     raise HTTPException(
-    #         status_code=500,
-    #         detail="Server API key is not configured",
-    #     )
-    #
-    # if not x_api_key or x_api_key != API_KEY:
-    #     raise HTTPException(
-    #         status_code=403,
-    #         detail="Invalid API Key")
-    #
+class GenerateRequest(BaseModel):
+    text: str = Field(
+        ...,
+        min_length=5,
+        max_length=MAX_INPUT_LENGTH,
+    )
+
+    mode: str = Field(
+        default="student",
+        max_length=30,
+    )
+
+    task: str = Field(
+        default="important_notes",
+        max_length=50,
+    )
+
 
 def verify_firebase_user(
     authorization: str = Header(None),
@@ -176,18 +182,14 @@ def verify_firebase_user(
 
         return decoded_token
 
-
     except Exception as e:
-
         print("Firebase token verification error:", str(e))
 
         raise HTTPException(
-
             status_code=401,
-
             detail=str(e),
-
         )
+
 
 firestore_db = firestore.client()
 
@@ -248,6 +250,64 @@ def validate_format(format_value: str) -> str:
         return "bullet"
 
     return cleaned
+
+
+def validate_mode(mode: str) -> str:
+    allowed = {
+        "student",
+        "professional",
+        "general",
+    }
+
+    cleaned = mode.lower().strip()
+
+    if cleaned not in allowed:
+        return "student"
+
+    return cleaned
+
+
+def validate_task(mode: str, task: str) -> str:
+    cleaned_task = task.lower().strip()
+
+    allowed_tasks = {
+        "student": {
+            "important_notes",
+            "qa_generation",
+            "answer_questions",
+            "flashcards",
+            "mcqs",
+            "beginner_explanation",
+            "revision_sheet",
+        },
+        "professional": {
+            "executive_summary",
+            "main_points",
+            "action_items",
+            "meeting_minutes",
+            "structured_report",
+            "table_format",
+            "email_draft",
+        },
+        "general": {
+            "short_summary",
+            "bullet_summary",
+            "key_points",
+            "simplify",
+            "clean_text",
+        },
+    }
+
+    defaults = {
+        "student": "important_notes",
+        "professional": "executive_summary",
+        "general": "short_summary",
+    }
+
+    if cleaned_task not in allowed_tasks.get(mode, set()):
+        return defaults.get(mode, "short_summary")
+
+    return cleaned_task
 
 
 def legal_page(
@@ -385,250 +445,24 @@ def home():
     <title>Lumina AI - AI Notes Summarizer</title>
     <meta name="description" content="Lumina AI converts notes, PDFs, scanned pages, and images into clean AI-powered summaries for study and productivity.">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-
-        body {{
-            font-family: Inter, Arial, sans-serif;
-            background: linear-gradient(135deg, #eef2ff, #f8fafc);
-            color: #111827;
-            min-height: 100vh;
-            padding: 32px 18px;
-        }}
-
-        .container {{
-            max-width: 1080px;
-            margin: auto;
-            background: #ffffff;
-            border-radius: 32px;
-            padding: 64px;
-            box-shadow: 0 14px 50px rgba(15, 23, 42, 0.08);
-        }}
-
-        .badge {{
-            display: inline-block;
-            padding: 8px 16px;
-            background: #eef2ff;
-            color: #4f46e5;
-            border-radius: 999px;
-            font-size: 14px;
-            font-weight: 700;
-            margin-bottom: 24px;
-        }}
-
-        h1 {{
-            font-size: 56px;
-            line-height: 1.1;
-            margin-bottom: 22px;
-        }}
-
-        .highlight {{
-            color: #4f46e5;
-        }}
-
-        .hero-text {{
-            font-size: 19px;
-            line-height: 1.8;
-            color: #475569;
-            max-width: 820px;
-        }}
-
-        .section-title {{
-            margin-top: 46px;
-            font-size: 28px;
-            font-weight: 800;
-        }}
-
-        .features {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-            gap: 18px;
-            margin-top: 22px;
-        }}
-
-        .feature {{
-            background: #f8fafc;
-            padding: 22px;
-            border-radius: 20px;
-            border: 1px solid #e5e7eb;
-        }}
-
-        .feature strong {{
-            display: block;
-            color: #111827;
-            font-size: 17px;
-            margin-bottom: 8px;
-        }}
-
-        .feature p {{
-            color: #475569;
-            line-height: 1.7;
-            font-size: 15px;
-        }}
-
-        .info {{
-            margin-top: 28px;
-            padding: 24px;
-            border-radius: 22px;
-            background: #eef2ff;
-            color: #3730a3;
-            line-height: 1.8;
-        }}
-
-        .buttons {{
-            margin-top: 40px;
-            display: flex;
-            gap: 16px;
-            flex-wrap: wrap;
-        }}
-
-        .btn {{
-            text-decoration: none;
-            padding: 15px 28px;
-            border-radius: 15px;
-            font-weight: 800;
-        }}
-
-        .primary {{
-            background: #4f46e5;
-            color: white;
-        }}
-
-        .secondary {{
-            background: #eef2ff;
-            color: #4f46e5;
-        }}
-
-        .footer {{
-            margin-top: 56px;
-            padding-top: 24px;
-            border-top: 1px solid #e5e7eb;
-            display: flex;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 14px;
-            color: #64748b;
-            font-size: 14px;
-        }}
-
-        .footer a {{
-            color: #4f46e5;
-            text-decoration: none;
-            font-weight: 700;
-        }}
-
-        .footer a:hover {{
-            text-decoration: underline;
-        }}
-
-        @media (max-width: 768px) {{
-            .container {{
-                padding: 34px;
-            }}
-
-            h1 {{
-                font-size: 38px;
-            }}
-
-            .hero-text {{
-                font-size: 16px;
-            }}
-        }}
-    </style>
 </head>
-
-<body>
-    <main class="container">
-        <div class="badge">AI Powered Study Assistant</div>
-
-        <h1>
-            Lumina AI helps you turn
-            <span class="highlight">notes into study-ready summaries</span>.
-        </h1>
-
-        <p class="hero-text">
-            Lumina AI is an educational productivity app that helps users convert
-            raw notes, PDFs, scanned pages, images, and camera-captured text into
-            clean AI-generated summaries, revision notes, key points, beginner
-            explanations, and question-answer study formats.
+<body style="font-family: Arial, sans-serif; background:#f8fafc; color:#111827; padding:40px;">
+    <main style="max-width:960px; margin:auto; background:white; padding:48px; border-radius:28px;">
+        <h1>Lumina AI</h1>
+        <p>
+            Lumina AI converts notes, PDFs, scanned pages, images, and camera-captured text
+            into clean AI-powered summaries, study notes, key points, beginner explanations,
+            and question-answer formats.
         </p>
 
-        <h2 class="section-title">What Lumina AI Does</h2>
+        <h2>API Status</h2>
+        <p>Backend is running successfully.</p>
 
-        <section class="features">
-            <div class="feature">
-                <strong>PDF Note Processing</strong>
-                <p>
-                    Users can upload PDF study material and extract text for AI-powered summarization.
-                </p>
-            </div>
-
-            <div class="feature">
-                <strong>Image & Camera OCR</strong>
-                <p>
-                    Lumina can extract text from uploaded images and camera scans of handwritten or printed notes.
-                </p>
-            </div>
-
-            <div class="feature">
-                <strong>AI Summaries</strong>
-                <p>
-                    The app generates clean summaries, bullet notes, detailed notes, key points, beginner explanations, and Q&A formats.
-                </p>
-            </div>
-
-            <div class="feature">
-                <strong>Saved History</strong>
-                <p>
-                    Logged-in users can save summaries, organize them into folders, mark favorites, and access history securely.
-                </p>
-            </div>
-
-            <div class="feature">
-                <strong>Export & Share</strong>
-                <p>
-                    Users can copy, share, and export generated study summaries for later revision.
-                </p>
-            </div>
-
-            <div class="feature">
-                <strong>Account Control</strong>
-                <p>
-                    Users can manage their account, logout, and delete their account and saved data from inside the app.
-                </p>
-            </div>
-        </section>
-
-        <div class="info">
-            Lumina AI is designed for students, learners, and productivity-focused users.
-            It is not a replacement for professional, medical, legal, or academic advice.
-            Users should verify important information independently.
-        </div>
-
-        <div class="buttons">
-            <a href="/download-app" class="btn primary">Download App</a>
-            <a href="/privacy-policy" class="btn secondary">Privacy Policy</a>
-            <a href="/terms-and-conditions" class="btn secondary">Terms & Conditions</a>
-        </div>
-
-        <div class="footer">
-            <div>
-                © 2026 Lumina AI. All rights reserved.
-                <br>
-                Support: <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>
-            </div>
-
-            <div>
-                <a href="/privacy-policy">Privacy Policy</a>
-                &nbsp; | &nbsp;
-                <a href="/terms-and-conditions">Terms & Conditions</a>
-            </div>
-        </div>
+        <p>
+            <a href="/health">Health Check</a> |
+            <a href="/privacy-policy">Privacy Policy</a> |
+            <a href="/terms-and-conditions">Terms & Conditions</a>
+        </p>
     </main>
 </body>
 </html>
@@ -640,86 +474,34 @@ def health_check():
     return {
         "app": APP_NAME,
         "status": "healthy",
-        "version": "1.2.0",
-        "model": MODEL_NAME,
+        "version": "2.0.0",
+        "legacy_model": MODEL_NAME,
+        "model_system_enabled": True,
     }
+
 
 @app.get("/download-app", response_class=HTMLResponse)
 def download_app():
     return """
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <title>Download Lumina AI</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-                body {
-                    font-family: Arial, sans-serif;
-                    background: #f8fafc;
-                    color: #111827;
-                    min-height: 100vh;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    padding: 24px;
-                }
-        
-                .card {
-                    max-width: 560px;
-                    background: white;
-                    padding: 40px;
-                    border-radius: 28px;
-                    box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08);
-                    text-align: center;
-                }
-        
-                h1 {
-                    font-size: 34px;
-                    margin-bottom: 14px;
-                }
-        
-                p {
-                    color: #475569;
-                    line-height: 1.7;
-                    margin-bottom: 28px;
-                }
-        
-                .btn {
-                    display: inline-block;
-                    background: #4f46e5;
-                    color: white;
-                    text-decoration: none;
-                    padding: 15px 28px;
-                    border-radius: 16px;
-                    font-weight: 700;
-                }
-        
-                .note {
-                    margin-top: 22px;
-                    font-size: 14px;
-                    color: #64748b;
-                }
-            </style>
-        </head>
-        <body>
-            <main class="card">
-                <h1>Download Lumina AI</h1>
-                <p>
-                    Lumina AI helps you convert PDFs, images, camera scans,
-                    and notes into clean AI-powered study summaries.
-                </p>
-        
-                <a class="btn" href="/static/lumina-ai.apk" download>
-                    Download APK
-                </a>
-        
-                <p class="note">
-                    Play Store version coming soon.
-                </p>
-            </main>
-        </body>
-        </html>
-        """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Download Lumina AI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: Arial, sans-serif; background:#f8fafc; color:#111827; min-height:100vh; display:flex; align-items:center; justify-content:center;">
+    <main style="max-width:560px; background:white; padding:40px; border-radius:28px; text-align:center;">
+        <h1>Download Lumina AI</h1>
+        <p>Lumina AI helps you convert PDFs, images, camera scans, and notes into clean AI-powered study summaries.</p>
+        <a style="display:inline-block; background:#4f46e5; color:white; text-decoration:none; padding:15px 28px; border-radius:16px; font-weight:700;" href="/static/lumina-ai.apk" download>
+            Download APK
+        </a>
+        <p style="margin-top:22px; color:#64748b;">Play Store version coming soon.</p>
+    </main>
+</body>
+</html>
+"""
+
 
 @app.get("/privacy-policy", response_class=HTMLResponse)
 def privacy_policy():
@@ -756,8 +538,8 @@ def privacy_policy():
         <h2>Third-Party Services</h2>
         <p>
             Lumina AI may use Firebase for authentication and database storage,
-            Google services for sign-in where enabled, and OpenRouter or compatible
-            AI model providers for text processing.
+            Google services for sign-in where enabled, and OpenRouter, Gemini, Ollama,
+            or compatible AI model providers for text processing.
         </p>
 
         <h2>Data Security</h2>
@@ -920,6 +702,7 @@ Output rules:
 """,
 }
 
+
 def check_and_increment_daily_usage(
     user_uid: str,
 ):
@@ -979,6 +762,108 @@ def check_and_increment_daily_usage(
         usage_ref,
     )
 
+
+@app.post("/v2/generate")
+@limiter.limit("20/minute")
+def generate_v2(
+    request: Request,
+    generate_request: GenerateRequest,
+    authorization: str = Header(None),
+):
+    decoded_user = verify_firebase_user(
+        authorization,
+    )
+
+    user_uid = decoded_user.get("uid")
+
+    if not user_uid:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Firebase user",
+        )
+
+    cleaned_text = clean_input_text(
+        generate_request.text,
+    )
+
+    if len(cleaned_text) < 5:
+        raise HTTPException(
+            status_code=400,
+            detail="Input text is too short",
+        )
+
+    if len(cleaned_text) > MAX_INPUT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail="Input text is too large",
+        )
+
+    selected_mode = validate_mode(
+        generate_request.mode,
+    )
+
+    selected_task = validate_task(
+        selected_mode,
+        generate_request.task,
+    )
+
+    try:
+        result = lumina_router.generate_from_text(
+            text=cleaned_text,
+            mode=selected_mode,
+            task=selected_task,
+        )
+
+        formatted = result.get(
+            "formatted_output",
+            {},
+        )
+
+        generated_text = formatted.get(
+            "markdown",
+            "",
+        )
+
+        if not generated_text:
+            raise HTTPException(
+                status_code=500,
+                detail="AI returned empty output",
+            )
+
+        usage_count = check_and_increment_daily_usage(
+            user_uid,
+        )
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "title": formatted.get("title", ""),
+                "markdown": formatted.get("markdown", ""),
+                "plainText": formatted.get("plain_text", ""),
+                "sections": formatted.get("sections", []),
+                "sectionCount": formatted.get("section_count", 0),
+                "mode": formatted.get("mode", selected_mode),
+                "task": formatted.get("task", selected_task),
+                "format": formatted.get("format", ""),
+                "provider": formatted.get("provider", ""),
+                "model": formatted.get("model", ""),
+                "usageCount": usage_count,
+                "dailyLimit": DAILY_FREE_LIMIT,
+            }
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        print("V2 generation error:", str(e))
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate output. Please try again.",
+        )
+
+
 @app.post("/summarize")
 @limiter.limit("20/minute")
 def summarize_notes(
@@ -997,7 +882,6 @@ def summarize_notes(
             status_code=401,
             detail="Invalid Firebase user",
         )
-
 
     if not OPENROUTER_API_KEY:
         raise HTTPException(
@@ -1094,7 +978,7 @@ User text:
                 detail="AI returned empty summary",
             )
 
-        check_and_increment_daily_usage(
+        usage_count = check_and_increment_daily_usage(
             user_uid,
         )
 
@@ -1103,6 +987,8 @@ User text:
                 "summary": summary,
                 "format": selected_format,
                 "inputLength": len(cleaned_text),
+                "usageCount": usage_count,
+                "dailyLimit": DAILY_FREE_LIMIT,
             }
         )
 
@@ -1123,6 +1009,8 @@ User text:
                 status_code=429,
                 detail="AI provider is busy. Please try again shortly.",
             )
+
+        print("Legacy summarize error:", str(e))
 
         raise HTTPException(
             status_code=500,

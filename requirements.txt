@@ -4,3 +4,6 @@ openai
 python-dotenv
 slowapi==0.1.9
 firebase-admin
+pymupdf
+pillow
+pytesseract
