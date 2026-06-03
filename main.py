@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from openai import OpenAI
 from dotenv import load_dotenv
 
 from slowapi import Limiter
@@ -28,7 +27,10 @@ APP_NAME = "Lumina AI"
 CONTACT_EMAIL = "support@lumina-ai.co.in"
 BASE_URL = "https://www.lumina-ai.co.in"
 
-OPENROUTER_API_KEY = os.getenv("LUMINA_API_KEY")
+LUMINA_GENERATION_PROVIDER = os.getenv(
+    "LUMINA_GENERATION_PROVIDER",
+    "gemini",
+).lower().strip()
 
 FIREBASE_SERVICE_ACCOUNT_JSON = os.getenv(
     "FIREBASE_SERVICE_ACCOUNT_JSON"
@@ -57,15 +59,6 @@ MAX_INPUT_LENGTH = int(
 DAILY_FREE_LIMIT = int(
     os.getenv("DAILY_FREE_LIMIT", "15")
 )
-
-MODEL_NAME = os.getenv(
-    "OPENROUTER_MODEL",
-    "meta-llama/llama-3.1-8b-instruct",
-)
-
-if not OPENROUTER_API_KEY:
-    print("WARNING: OPENROUTER_API_KEY missing")
-
 
 limiter = Limiter(
     key_func=get_remote_address,
@@ -108,17 +101,9 @@ app.add_middleware(
     ],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=[
-        "Content-Type",
-        "authorization",
-    ],
+    allow_headers=["*"],
 )
 
-
-client = OpenAI(
-    api_key=OPENROUTER_API_KEY,
-    base_url="https://openrouter.ai/api/v1",
-)
 
 lumina_router = PipelineRouter()
 
@@ -475,7 +460,7 @@ def health_check():
         "app": APP_NAME,
         "status": "healthy",
         "version": "2.0.0",
-        "legacy_model": MODEL_NAME,
+        "generation_provider": LUMINA_GENERATION_PROVIDER,
         "model_system_enabled": True,
     }
 
@@ -538,7 +523,7 @@ def privacy_policy():
         <h2>Third-Party Services</h2>
         <p>
             Lumina AI may use Firebase for authentication and database storage,
-            Google services for sign-in where enabled, and OpenRouter, Gemini, Ollama,
+            Google services for sign-in where enabled, and Gemini, Ollama,
             or compatible AI model providers for text processing.
         </p>
 
@@ -871,6 +856,13 @@ def summarize_notes(
     note_request: NoteRequest,
     authorization: str = Header(None),
 ):
+    """
+    Legacy endpoint kept for older app versions.
+
+    It no longer uses legacy AI client.
+    It maps old summary formats to the new Lumina model-system pipeline.
+    """
+
     decoded_user = verify_firebase_user(
         authorization,
     )
@@ -883,13 +875,9 @@ def summarize_notes(
             detail="Invalid Firebase user",
         )
 
-    if not OPENROUTER_API_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="AI provider API key is not configured",
-        )
-
-    cleaned_text = clean_input_text(note_request.text)
+    cleaned_text = clean_input_text(
+        note_request.text,
+    )
 
     if len(cleaned_text) < 5:
         raise HTTPException(
@@ -907,70 +895,46 @@ def summarize_notes(
         note_request.format,
     )
 
-    selected_style = summary_styles.get(
+    legacy_task_map = {
+        "bullet": "bullet_summary",
+        "short": "short_summary",
+        "detailed": "important_notes",
+        "keypoints": "key_points",
+        "beginner": "beginner_explanation",
+        "qa": "qa_generation",
+    }
+
+    selected_task = legacy_task_map.get(
         selected_format,
-        summary_styles["bullet"],
+        "bullet_summary",
     )
 
-    prompt = f"""
-You are Lumina AI, a precise academic note-cleaning and summarization assistant.
-
-Your goal:
-Transform the user's extracted notes into clean, accurate, useful study material.
-
-Important behavior:
-- Use ONLY the information present in the user's text.
-- Do NOT invent facts, examples, formulas, names, dates, or explanations.
-- If the text is messy because of OCR, silently clean it.
-- Remove random OCR symbols, repeated characters, broken spacing, and meaningless fragments.
-- Preserve mathematical formulas, definitions, technical terms, headings, and step-by-step processes.
-- Keep the output readable on mobile.
-- Do not include disclaimers, introductions, or phrases like "Here is".
-- Do not mention OCR unless the user text itself is about OCR.
-- Do not add markdown tables unless the content clearly needs comparison.
-- If the input is too unclear, provide the cleanest possible structured extraction instead of guessing.
-
-Selected output style:
-{selected_style}
-
-Formatting:
-- Use clean markdown-style formatting.
-- Use headings only when helpful.
-- Use bullets for readability.
-- Avoid random special characters.
-- Avoid over-formatting.
-- Keep line breaks clean.
-
-User text:
-\"\"\"
-{cleaned_text}
-\"\"\"
-"""
+    selected_mode = (
+        "student"
+        if selected_task in {
+            "important_notes",
+            "qa_generation",
+            "beginner_explanation",
+        }
+        else "general"
+    )
 
     try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            temperature=0.15,
-            top_p=0.8,
-            max_tokens=1800,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are Lumina AI, a careful academic summarizer. "
-                        "You clean OCR text, preserve facts, avoid hallucinations, "
-                        "and output only useful study-ready content."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
-            ],
+        result = lumina_router.generate_from_text(
+            text=cleaned_text,
+            mode=selected_mode,
+            task=selected_task,
         )
 
-        summary = response.choices[0].message.content
-        summary = clean_ai_output(summary)
+        formatted = result.get(
+            "formatted_output",
+            {},
+        )
+
+        summary = formatted.get(
+            "markdown",
+            "",
+        )
 
         if not summary:
             raise HTTPException(
@@ -986,6 +950,8 @@ User text:
             content={
                 "summary": summary,
                 "format": selected_format,
+                "mode": selected_mode,
+                "task": selected_task,
                 "inputLength": len(cleaned_text),
                 "usageCount": usage_count,
                 "dailyLimit": DAILY_FREE_LIMIT,
@@ -996,23 +962,10 @@ User text:
         raise
 
     except Exception as e:
-        error_message = str(e)
-
-        if "No endpoints found" in error_message:
-            raise HTTPException(
-                status_code=502,
-                detail="Selected AI model is unavailable. Please change the model.",
-            )
-
-        if "rate" in error_message.lower():
-            raise HTTPException(
-                status_code=429,
-                detail="AI provider is busy. Please try again shortly.",
-            )
-
-        print("Legacy summarize error:", str(e))
+        print("Legacy summarize via V2 pipeline error:", str(e))
 
         raise HTTPException(
             status_code=500,
             detail="Failed to generate summary. Please try again.",
         )
+
