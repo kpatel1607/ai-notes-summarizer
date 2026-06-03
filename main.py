@@ -17,6 +17,7 @@ import json
 import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth, firestore
 from datetime import datetime, timezone
+from typing import Dict, Any
 
 from model_systems.pipeline_router import PipelineRouter
 
@@ -217,6 +218,23 @@ def clean_ai_output(text: str) -> str:
     text = text.strip()
 
     return text
+
+
+def extract_generation_error(result: Dict[str, Any]) -> str:
+    generation_result = result.get("generation_result", {})
+
+    if isinstance(generation_result, dict):
+        error = generation_result.get("error")
+
+        if error:
+            return str(error)
+
+    errors = result.get("errors")
+
+    if errors:
+        return str(errors)
+
+    return "AI returned empty output"
 
 
 def validate_format(format_value: str) -> str:
@@ -810,9 +828,12 @@ def generate_v2(
         )
 
         if not generated_text:
+            error_detail = extract_generation_error(result)
+            print("V2 empty output details:", error_detail)
+
             raise HTTPException(
                 status_code=500,
-                detail="AI returned empty output",
+                detail=error_detail,
             )
 
         usage_count = check_and_increment_daily_usage(
@@ -937,9 +958,12 @@ def summarize_notes(
         )
 
         if not summary:
+            error_detail = extract_generation_error(result)
+            print("Legacy empty output details:", error_detail)
+
             raise HTTPException(
                 status_code=500,
-                detail="AI returned empty summary",
+                detail=error_detail,
             )
 
         usage_count = check_and_increment_daily_usage(

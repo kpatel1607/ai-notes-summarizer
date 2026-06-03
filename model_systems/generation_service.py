@@ -22,20 +22,25 @@ class GenerationService:
             "gemini",
         ).lower().strip()
 
+        self.gemini_model_name = os.getenv(
+            "LUMINA_MODEL_NAME",
+            "gemini-2.0-flash",
+        ).strip()
+
+        default_gemini_api_url = (
+            "https://generativelanguage.googleapis.com/v1beta/"
+            f"models/{self.gemini_model_name}:generateContent"
+        )
+
         self.gemini_api_url = os.getenv(
             "LUMINA_API_URL",
-            "",
-        )
+            default_gemini_api_url,
+        ).strip()
 
         self.gemini_api_key = os.getenv(
             "LUMINA_API_KEY",
             "",
-        )
-
-        self.gemini_model_name = os.getenv(
-            "LUMINA_MODEL_NAME",
-            "gemini-2.5-flash",
-        )
+        ).strip()
 
         self.ollama_url = os.getenv(
             "LUMINA_OLLAMA_URL",
@@ -339,15 +344,40 @@ class GenerationService:
                 timeout=120,
             )
 
-            response.raise_for_status()
+            if response.status_code >= 400:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Gemini API error {response.status_code}: "
+                        f"{response.text[:500]}"
+                    ),
+                    "generated_text": "",
+                    "provider": "gemini",
+                    "model": self.gemini_model_name,
+                }
 
             data = response.json()
 
+            generated_text = self._extract_gemini_text(
+                data,
+            )
+
+            if not generated_text:
+                return {
+                    "success": False,
+                    "error": (
+                        "Gemini returned no text. Raw response: "
+                        f"{str(data)[:500]}"
+                    ),
+                    "generated_text": "",
+                    "raw_response": data,
+                    "provider": "gemini",
+                    "model": self.gemini_model_name,
+                }
+
             return {
                 "success": True,
-                "generated_text": self._extract_gemini_text(
-                    data,
-                ),
+                "generated_text": generated_text,
                 "raw_response": data,
                 "provider": "gemini",
                 "model": self.gemini_model_name,
@@ -386,4 +416,4 @@ class GenerationService:
             )
 
         except Exception:
-            return str(response_json)
+            return ""
