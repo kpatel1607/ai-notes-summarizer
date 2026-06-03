@@ -1,37 +1,39 @@
 from pathlib import Path
 from typing import Dict, Any
+import platform
+import traceback
 
 import fitz
 from PIL import Image
 import pytesseract
-from paddleocr import PaddleOCR
+
+try:
+    from paddleocr import PaddleOCR
+except ImportError:
+    PaddleOCR = None
 
 
-# Optional Tesseract fallback
-pytesseract.pytesseract.tesseract_cmd = (
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-)
+if platform.system() == "Windows":
+    pytesseract.pytesseract.tesseract_cmd = (
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    )
 
 
 class OCRPipeline:
     def __init__(self):
-        """
-        PaddleOCR initialization.
+        self.paddle_ocr = None
 
-        use_angle_cls:
-        Better rotated text handling.
-
-        lang:
-        Start with English.
-        Later:
-        multilingual support.
-        """
-
-        self.paddle_ocr = PaddleOCR(
-            use_angle_cls=True,
-            lang="en",
-            show_log=False,
-        )
+        if PaddleOCR is not None:
+            try:
+                self.paddle_ocr = PaddleOCR(
+                    use_angle_cls=True,
+                    lang="en",
+                    show_log=False,
+                )
+            except Exception:
+                print("PaddleOCR initialization failed:")
+                traceback.print_exc()
+                self.paddle_ocr = None
 
     # =========================================
     # TEXT INPUT
@@ -41,7 +43,6 @@ class OCRPipeline:
         self,
         text: str,
     ) -> Dict[str, Any]:
-
         return {
             "text": text.strip(),
             "source": "plain_text",
@@ -56,7 +57,6 @@ class OCRPipeline:
         self,
         file_path: str,
     ) -> Dict[str, Any]:
-
         path = Path(file_path)
 
         if not path.exists():
@@ -67,7 +67,6 @@ class OCRPipeline:
         extracted_text = ""
 
         for page in document:
-
             page_text = page.get_text().strip()
 
             if page_text:
@@ -75,22 +74,18 @@ class OCRPipeline:
 
         document.close()
 
-        cleaned = self.clean_text(
-            extracted_text,
-        )
+        cleaned = self.clean_text(extracted_text)
 
         return {
             "text": cleaned,
             "source": "pdf_text",
-            "confidence":
-                0.92 if cleaned else 0.4,
+            "confidence": 0.92 if cleaned else 0.4,
         }
 
     def extract_from_scanned_pdf(
-            self,
-            file_path: str,
+        self,
+        file_path: str,
     ) -> Dict[str, Any]:
-
         path = Path(file_path)
 
         if not path.exists():
@@ -101,26 +96,22 @@ class OCRPipeline:
         all_text = ""
 
         for page_index, page in enumerate(document):
-            pix = page.get_pixmap(
-                dpi=220,
-            )
+            pix = page.get_pixmap(dpi=220)
 
             temp_image_path = (
-                    path.parent / f"_temp_pdf_page_{page_index}.png"
+                path.parent / f"_temp_pdf_page_{page_index}.png"
             )
 
-            pix.save(
-                str(temp_image_path),
-            )
+            pix.save(str(temp_image_path))
 
             page_result = self.extract_from_image(
                 str(temp_image_path),
             )
 
-            if page_result["text"]:
+            if page_result.get("text"):
                 all_text += (
-                        f"\n\n--- Page {page_index + 1} ---\n"
-                        + page_result["text"]
+                    f"\n\n--- Page {page_index + 1} ---\n"
+                    + page_result["text"]
                 )
 
             try:
@@ -130,9 +121,7 @@ class OCRPipeline:
 
         document.close()
 
-        cleaned = self.clean_text(
-            all_text,
-        )
+        cleaned = self.clean_text(all_text)
 
         return {
             "text": cleaned,
@@ -148,7 +137,6 @@ class OCRPipeline:
         self,
         file_path: str,
     ) -> Dict[str, Any]:
-
         path = Path(file_path)
 
         if not path.exists():
@@ -158,85 +146,62 @@ class OCRPipeline:
         # PaddleOCR primary extraction
         # -------------------------------
 
-        try:
-            result = self.paddle_ocr.ocr(
-                str(path),
-                # cls=True,
-            )
+        if self.paddle_ocr is not None:
+            try:
+                result = self.paddle_ocr.ocr(
+                    str(path),
+                )
 
-            extracted_lines = []
+                extracted_lines = []
 
-            if result and result[0]:
+                if result and result[0]:
+                    for line in result[0]:
+                        text = line[1][0]
 
-                for line in result[0]:
+                        if text.strip():
+                            extracted_lines.append(text)
 
-                    text = line[1][0]
+                extracted_text = "\n".join(extracted_lines)
+                cleaned = self.clean_text(extracted_text)
 
-                    if text.strip():
-                        extracted_lines.append(
-                            text
-                        )
+                if cleaned:
+                    return {
+                        "text": cleaned,
+                        "source": "paddleocr",
+                        "confidence": 0.90,
+                    }
 
-            extracted_text = "\n".join(
-                extracted_lines
-            )
-
-            cleaned = self.clean_text(
-                extracted_text
-            )
-
-            if cleaned:
-
-                return {
-                    "text": cleaned,
-                    "source": "paddleocr",
-                    "confidence": 0.90,
-                }
-
-
-        except Exception as e:
-
-            import traceback
-
-            print("\nPADDLE OCR ERROR:")
-
-            traceback.print_exc()
+            except Exception:
+                print("\nPADDLE OCR ERROR:")
+                traceback.print_exc()
 
         # -------------------------------
         # Tesseract fallback
         # -------------------------------
 
         try:
-
             image = Image.open(path)
 
-            fallback_text = (
-                pytesseract.image_to_string(
-                    image
-                )
+            fallback_text = pytesseract.image_to_string(
+                image,
             )
 
-            cleaned = self.clean_text(
-                fallback_text
-            )
+            cleaned = self.clean_text(fallback_text)
 
             return {
                 "text": cleaned,
                 "source": "tesseract_fallback",
-                "confidence":
-                    0.65 if cleaned else 0.3,
+                "confidence": 0.65 if cleaned else 0.3,
             }
 
         except Exception as e:
-
-            print(
-                f"Tesseract failed: {e}"
-            )
+            print(f"Tesseract failed: {e}")
 
             return {
                 "text": "",
                 "source": "ocr_failed",
                 "confidence": 0.0,
+                "error": str(e),
             }
 
     # =========================================
@@ -247,23 +212,13 @@ class OCRPipeline:
         self,
         text: str,
     ) -> str:
+        if not text:
+            return ""
 
-        cleaned = text.replace(
-            "\r",
-            "\n",
-        )
+        cleaned = text.replace("\r", "\n")
 
-        # remove extra spaces
-        cleaned = " ".join(
-            cleaned.split()
-        )
+        cleaned = " ".join(cleaned.split())
 
-        # remove weird symbols
-        cleaned = cleaned.replace(
-            "•",
-            ""
-        )
+        cleaned = cleaned.replace("•", "")
 
-        cleaned = cleaned.strip()
-
-        return cleaned
+        return cleaned.strip()
