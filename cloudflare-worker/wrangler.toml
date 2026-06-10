@@ -1,0 +1,18 @@
+name = "lumina-ai-proxy"
+main = "src/worker.js"
+compatibility_date = "2026-06-10"
+
+[vars]
+ORIGIN_BASE_URL = "https://kpatel1607-lumina.hf.space"
+PUBLIC_BASE_URL = "https://lumina-ai.co.in"
+ALLOWED_ORIGINS = "https://lumina-ai.co.in,https://www.lumina-ai.co.in"
+MAX_UPLOAD_BYTES = "15728640"
+REQUEST_TIMEOUT_MS = "120000"
+
+[[routes]]
+pattern = "lumina-ai.co.in/*"
+zone_name = "lumina-ai.co.in"
+
+[[routes]]
+pattern = "www.lumina-ai.co.in/*"
+zone_name = "lumina-ai.co.in"

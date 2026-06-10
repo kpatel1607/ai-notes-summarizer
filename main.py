@@ -97,7 +97,7 @@ ALLOWED_ORIGINS = list(dict.fromkeys(ALLOWED_ORIGINS))
 
 ALLOWED_HOSTS = os.getenv(
     "ALLOWED_HOSTS",
-    "localhost,127.0.0.1,*.hf.space,www.lumina-ai.co.in,lumina-ai.co.in",
+    "localhost,127.0.0.1,*.hf.space,kpatel1607-lumina.hf.space,www.lumina-ai.co.in,lumina-ai.co.in",
 ).split(",")
 
 ALLOWED_HOSTS = [
