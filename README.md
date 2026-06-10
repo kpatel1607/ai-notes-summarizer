@@ -25,10 +25,10 @@ Set these as Space secrets:
 - `LUMINA_API_KEY`
 - `LUMINA_GENERATION_PROVIDER=gemini`
 - `LUMINA_MODEL_NAME=gemini-2.0-flash`
-- `PUBLIC_BASE_URL=https://api.your-domain.com`
-- `CUSTOM_DOMAIN=https://api.your-domain.com`
-- `ALLOWED_ORIGINS=https://api.your-domain.com,https://your-policy-site.example`
-- `ALLOWED_HOSTS=api.your-domain.com,*.hf.space,localhost,127.0.0.1`
+- `PUBLIC_BASE_URL=https://lumina-ai.co.in`
+- `CUSTOM_DOMAIN=https://lumina-ai.co.in`
+- `ALLOWED_ORIGINS=https://lumina-ai.co.in,https://www.lumina-ai.co.in`
+- `ALLOWED_HOSTS=lumina-ai.co.in,www.lumina-ai.co.in,*.hf.space,localhost,127.0.0.1`
 
 Optional:
 
@@ -39,7 +39,7 @@ Optional:
 
 ## Custom Domain Notes
 
-Use `PUBLIC_BASE_URL` for the public API, download, and update URL that the Android app and policy pages should show. If Hugging Face does not let your Space use a custom domain directly on your account plan, keep the Space on `*.hf.space` and put your own domain in front of it with a reverse proxy such as Cloudflare. The backend is prepared for either option as long as `PUBLIC_BASE_URL`, `ALLOWED_ORIGINS`, and `ALLOWED_HOSTS` include the public domain.
+Use `PUBLIC_BASE_URL` for the public API, download, and update URL that the Android app and policy pages should show. For this project, the main domain is `https://lumina-ai.co.in`. If Hugging Face does not let your Space use the apex domain directly, keep the Space on `*.hf.space` and put `lumina-ai.co.in`, `www.lumina-ai.co.in`, or an API subdomain such as `api.lumina-ai.co.in` in front of it with a reverse proxy such as Cloudflare. The backend is prepared for any of those options as long as `PUBLIC_BASE_URL`, `ALLOWED_ORIGINS`, and `ALLOWED_HOSTS` include the public domain.
 
 For Play Store, use your own website domain for the privacy policy, support, and account deletion URLs. The app API can still be hosted on Hugging Face behind your API subdomain.
 

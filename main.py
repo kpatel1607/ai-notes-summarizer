@@ -33,14 +33,14 @@ PUBLIC_BASE_URL = os.getenv(
     "PUBLIC_BASE_URL",
     os.getenv(
         "BASE_URL",
-        "https://www.lumina-ai.co.in",
+        "https://lumina-ai.co.in",
     ),
 ).rstrip("/")
 BASE_URL = PUBLIC_BASE_URL
 
 CUSTOM_DOMAIN = os.getenv(
     "CUSTOM_DOMAIN",
-    "https://www.lumina-ai.co.in",
+    "https://lumina-ai.co.in",
 ).strip().rstrip("/")
 APP_VERSION_NAME = os.getenv("APP_VERSION_NAME", "2.0.0")
 APP_VERSION_CODE = int(os.getenv("APP_VERSION_CODE", "2"))
