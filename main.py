@@ -419,6 +419,438 @@ def validate_task(mode: str, task: str) -> str:
     return cleaned_task
 
 
+def site_styles() -> str:
+    return """
+    <style>
+        * { box-sizing: border-box; }
+        :root {
+            --ink: #101828;
+            --muted: #667085;
+            --line: rgba(16, 24, 40, .12);
+            --panel: rgba(255, 255, 255, .78);
+            --brand: #315efb;
+            --mint: #00a88f;
+            --gold: #f59e0b;
+            --rose: #e11d48;
+        }
+        html { scroll-behavior: smooth; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at 12% 10%, rgba(49, 94, 251, .14), transparent 28%),
+                radial-gradient(circle at 86% 12%, rgba(0, 168, 143, .13), transparent 30%),
+                linear-gradient(135deg, #f8fbff 0%, #ffffff 48%, #f5faf8 100%);
+            overflow-x: hidden;
+        }
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            opacity: .34;
+            background-image:
+                linear-gradient(rgba(16,24,40,.045) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(16,24,40,.045) 1px, transparent 1px);
+            background-size: 42px 42px;
+            mask-image: linear-gradient(to bottom, black, transparent 78%);
+        }
+        a { color: inherit; text-decoration: none; }
+        .nav {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            backdrop-filter: blur(18px);
+            background: rgba(255,255,255,.74);
+            border-bottom: 1px solid var(--line);
+        }
+        .nav-inner, .wrap {
+            width: min(1120px, calc(100% - 36px));
+            margin: 0 auto;
+        }
+        .nav-inner {
+            min-height: 72px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 900;
+            letter-spacing: 0;
+        }
+        .logo {
+            width: 38px;
+            height: 38px;
+            display: grid;
+            place-items: center;
+            border-radius: 12px;
+            color: white;
+            background: conic-gradient(from 190deg, var(--brand), var(--mint), var(--gold), var(--brand));
+            box-shadow: 0 14px 34px rgba(49,94,251,.22);
+            animation: floaty 4s ease-in-out infinite;
+        }
+        .links {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+        .links a, .pill {
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,.72);
+            padding: 10px 14px;
+            border-radius: 999px;
+            color: #344054;
+            font-weight: 700;
+            font-size: 14px;
+        }
+        .button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            border: 0;
+            border-radius: 999px;
+            background: #101828;
+            color: white;
+            padding: 14px 19px;
+            font-weight: 900;
+            box-shadow: 0 18px 36px rgba(16,24,40,.18);
+            cursor: pointer;
+            transition: transform .2s ease, box-shadow .2s ease;
+        }
+        .button:hover { transform: translateY(-2px); box-shadow: 0 22px 42px rgba(16,24,40,.24); }
+        .button.secondary {
+            background: rgba(255,255,255,.78);
+            color: var(--ink);
+            border: 1px solid var(--line);
+            box-shadow: none;
+        }
+        .hero {
+            min-height: calc(100vh - 72px);
+            display: grid;
+            grid-template-columns: minmax(0, 1.03fr) minmax(320px, .97fr);
+            gap: 38px;
+            align-items: center;
+            padding: 58px 0 42px;
+        }
+        .eyebrow {
+            display: inline-flex;
+            gap: 8px;
+            align-items: center;
+            color: #175cd3;
+            background: rgba(49,94,251,.09);
+            border: 1px solid rgba(49,94,251,.16);
+            padding: 9px 13px;
+            border-radius: 999px;
+            font-weight: 850;
+            font-size: 14px;
+        }
+        h1 {
+            margin: 18px 0 16px;
+            font-size: clamp(44px, 8vw, 82px);
+            line-height: .92;
+            letter-spacing: 0;
+        }
+        .lead {
+            max-width: 680px;
+            color: var(--muted);
+            font-size: clamp(17px, 2vw, 20px);
+            line-height: 1.7;
+        }
+        .hero-actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 26px;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-top: 28px;
+        }
+        .metric, .card, .device, .legal-card {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            box-shadow: 0 20px 52px rgba(16,24,40,.08);
+            backdrop-filter: blur(18px);
+        }
+        .metric {
+            border-radius: 18px;
+            padding: 15px;
+        }
+        .metric strong { display: block; font-size: 22px; }
+        .metric span { color: var(--muted); font-size: 13px; }
+        .device {
+            position: relative;
+            border-radius: 34px;
+            padding: 18px;
+            overflow: hidden;
+            animation: riseIn .7s ease both;
+        }
+        .device::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(115deg, transparent 0%, rgba(255,255,255,.7) 48%, transparent 56%);
+            transform: translateX(-100%);
+            animation: sheen 5s ease-in-out infinite;
+            pointer-events: none;
+        }
+        .screen {
+            border-radius: 24px;
+            background: #0f172a;
+            color: white;
+            padding: 20px;
+            min-height: 500px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .scan-card {
+            background: rgba(255,255,255,.08);
+            border: 1px solid rgba(255,255,255,.12);
+            border-radius: 20px;
+            padding: 16px;
+            position: relative;
+            overflow: hidden;
+        }
+        .scan-line {
+            position: absolute;
+            left: 12px;
+            right: 12px;
+            height: 2px;
+            background: #34d399;
+            box-shadow: 0 0 26px #34d399;
+            animation: scan 3.2s ease-in-out infinite;
+        }
+        .fake-line {
+            height: 10px;
+            border-radius: 999px;
+            background: rgba(255,255,255,.22);
+            margin: 11px 0;
+        }
+        .fake-line.short { width: 62%; }
+        .mode-tabs {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+        .mode-tabs button {
+            border: 1px solid rgba(255,255,255,.14);
+            background: rgba(255,255,255,.08);
+            color: white;
+            border-radius: 14px;
+            padding: 11px 8px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+        .mode-tabs button.active {
+            background: #ffffff;
+            color: #101828;
+        }
+        .output {
+            flex: 1;
+            background: white;
+            color: #101828;
+            border-radius: 20px;
+            padding: 18px;
+        }
+        .output h3 { margin: 0 0 10px; }
+        .output ul { margin: 0; padding-left: 18px; color: #344054; line-height: 1.7; }
+        .section {
+            padding: 46px 0;
+        }
+        .section h2 {
+            margin: 0 0 12px;
+            font-size: clamp(28px, 4vw, 46px);
+        }
+        .section-lead {
+            color: var(--muted);
+            max-width: 760px;
+            line-height: 1.7;
+            font-size: 17px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-top: 24px;
+        }
+        .card, .legal-card {
+            border-radius: 22px;
+            padding: 22px;
+            transition: transform .2s ease, border-color .2s ease;
+        }
+        .card:hover, .legal-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(49,94,251,.32);
+        }
+        .icon {
+            width: 42px;
+            height: 42px;
+            border-radius: 14px;
+            display: grid;
+            place-items: center;
+            background: rgba(49,94,251,.1);
+            margin-bottom: 14px;
+        }
+        .card p, .legal-card p { color: var(--muted); line-height: 1.65; }
+        .status-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 18px;
+        }
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #f59e0b;
+            box-shadow: 0 0 0 6px rgba(245,158,11,.14);
+        }
+        .dot.good {
+            background: #12b76a;
+            box-shadow: 0 0 0 6px rgba(18,183,106,.14);
+        }
+        .footer {
+            border-top: 1px solid var(--line);
+            padding: 26px 0 40px;
+            color: var(--muted);
+        }
+        .legal-layout {
+            padding: 38px 0 56px;
+        }
+        .legal-card {
+            width: min(940px, calc(100% - 36px));
+            margin: 0 auto;
+        }
+        .legal-card h1 {
+            font-size: clamp(34px, 6vw, 58px);
+            line-height: 1;
+        }
+        .legal-card h2 { margin-top: 30px; }
+        .legal-card li { margin-bottom: 10px; line-height: 1.75; color: var(--muted); }
+        .notice {
+            border: 1px solid rgba(49,94,251,.18);
+            background: rgba(49,94,251,.08);
+            border-radius: 16px;
+            padding: 16px;
+            color: #344054;
+        }
+        @keyframes floaty {
+            0%, 100% { transform: translateY(0) rotate(0); }
+            50% { transform: translateY(-4px) rotate(3deg); }
+        }
+        @keyframes riseIn {
+            from { opacity: 0; transform: translateY(18px) scale(.98); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes sheen {
+            0%, 55% { transform: translateX(-110%); }
+            82%, 100% { transform: translateX(110%); }
+        }
+        @keyframes scan {
+            0%, 100% { top: 18px; opacity: .4; }
+            50% { top: calc(100% - 20px); opacity: 1; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation: none !important; transition: none !important; }
+        }
+        @media (max-width: 860px) {
+            .hero { grid-template-columns: 1fr; min-height: auto; }
+            .grid, .metrics { grid-template-columns: 1fr; }
+            .screen { min-height: 420px; }
+        }
+    </style>
+"""
+
+
+def site_nav() -> str:
+    return """
+    <header class="nav">
+        <div class="nav-inner">
+            <a class="brand" href="/">
+                <span class="logo">L</span>
+                <span>Lumina AI</span>
+            </a>
+            <div class="links">
+                <a href="/download-app">Download</a>
+                <a href="/privacy-policy">Privacy</a>
+                <a href="/terms-and-conditions">Terms</a>
+            </div>
+        </div>
+    </header>
+"""
+
+
+def site_scripts() -> str:
+    return """
+    <script>
+        const previews = {
+            student: {
+                title: "Student Mode",
+                points: ["Exam-ready notes", "Flashcards and Q&A", "Beginner explanations"]
+            },
+            professional: {
+                title: "Professional Mode",
+                points: ["Meeting minutes", "Action items", "Structured reports and tables"]
+            },
+            general: {
+                title: "General Mode",
+                points: ["Short summaries", "Cleaned text", "Key points in seconds"]
+            }
+        };
+
+        function setMode(mode) {
+            document.querySelectorAll("[data-mode]").forEach((button) => {
+                button.classList.toggle("active", button.dataset.mode === mode);
+            });
+
+            const preview = previews[mode];
+            const output = document.getElementById("mode-output");
+            if (!output) return;
+
+            output.innerHTML = `<h3>${preview.title}</h3><ul>${preview.points.map((point) => `<li>${point}</li>`).join("")}</ul>`;
+        }
+
+        async function loadStatus() {
+            const label = document.getElementById("status-label");
+            const dot = document.getElementById("status-dot");
+            const version = document.getElementById("version-label");
+
+            try {
+                const [health, appVersion] = await Promise.all([
+                    fetch("/health").then((response) => response.json()),
+                    fetch("/app-version").then((response) => response.json())
+                ]);
+
+                if (health.status === "healthy") {
+                    label.textContent = "Cloudflare proxy and AI backend are online";
+                    dot.classList.add("good");
+                }
+
+                version.textContent = `Android v${appVersion.latestVersionName || "2.0.0"}`;
+            } catch (error) {
+                label.textContent = "Status check is temporarily unavailable";
+            }
+        }
+
+        setMode("student");
+        loadStatus();
+    </script>
+"""
+
+
 def legal_page(
     title: str,
     subtitle: str,
@@ -604,25 +1036,83 @@ def home():
     <title>Lumina AI - AI Notes Summarizer</title>
     <meta name="description" content="Lumina AI converts notes, PDFs, scanned pages, and images into clean AI-powered summaries for study and productivity.">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {site_styles()}
 </head>
-<body style="font-family: Arial, sans-serif; background:#f8fafc; color:#111827; padding:40px;">
-    <main style="max-width:960px; margin:auto; background:white; padding:48px; border-radius:28px;">
-        <h1>Lumina AI</h1>
-        <p>
-            Lumina AI converts notes, PDFs, scanned pages, images, and camera-captured text
-            into clean AI-powered summaries, study notes, key points, beginner explanations,
-            and question-answer formats.
-        </p>
-
-        <h2>API Status</h2>
-        <p>Backend is running successfully.</p>
-
-        <p>
-            <a href="/health">Health Check</a> |
-            <a href="/privacy-policy">Privacy Policy</a> |
-            <a href="/terms-and-conditions">Terms & Conditions</a>
-        </p>
+<body>
+    {site_nav()}
+    <main class="wrap">
+        <section class="hero">
+            <div>
+                <span class="eyebrow">AI study workspace for Android</span>
+                <h1>Lumina AI</h1>
+                <p class="lead">
+                    Turn notes, PDFs, camera scans, and images into clean summaries,
+                    flashcards, Q&A, revision sheets, tables, and professional reports.
+                    Built for students and busy teams who need organized output fast.
+                </p>
+                <div class="hero-actions">
+                    <a class="button" href="/download-app">Download app</a>
+                    <a class="button secondary" href="/privacy-policy">View privacy policy</a>
+                </div>
+                <div class="status-row">
+                    <span id="status-dot" class="dot"></span>
+                    <span id="status-label">Checking Cloudflare proxy and backend...</span>
+                    <span class="pill" id="version-label">Android v{APP_VERSION_NAME}</span>
+                </div>
+                <div class="metrics">
+                    <div class="metric"><strong>3</strong><span>AI modes</span></div>
+                    <div class="metric"><strong>OCR</strong><span>PDF and image extraction</span></div>
+                    <div class="metric"><strong>Cloud</strong><span>Folders, favorites, history</span></div>
+                </div>
+            </div>
+            <div class="device" aria-label="Lumina AI app preview">
+                <div class="screen">
+                    <div class="scan-card">
+                        <div class="scan-line"></div>
+                        <strong>Document scan</strong>
+                        <div class="fake-line"></div>
+                        <div class="fake-line"></div>
+                        <div class="fake-line short"></div>
+                    </div>
+                    <div class="mode-tabs">
+                        <button class="active" data-mode="student" onclick="setMode('student')">Student</button>
+                        <button data-mode="professional" onclick="setMode('professional')">Pro</button>
+                        <button data-mode="general" onclick="setMode('general')">General</button>
+                    </div>
+                    <div id="mode-output" class="output"></div>
+                </div>
+            </div>
+        </section>
+        <section class="section" id="features">
+            <h2>Everything organized after generation.</h2>
+            <p class="section-lead">
+                Lumina AI is more than a generate button. It extracts text,
+                understands document structure, formats outputs by mode, and
+                keeps generated notes inside a searchable workspace.
+            </p>
+            <div class="grid">
+                <div class="card"><div class="icon">OCR</div><h3>Sharper extraction</h3><p>PDF text, scanned images, table hints, and OCR cleanup work together before generation.</p></div>
+                <div class="card"><div class="icon">AI</div><h3>Mode-aware outputs</h3><p>Student, professional, and general tasks use different instructions and formatting rules.</p></div>
+                <div class="card"><div class="icon">DIR</div><h3>Saved workspace</h3><p>Folders, favorites, history, analytics, and account controls keep summaries easy to find.</p></div>
+            </div>
+        </section>
+        <section class="section">
+            <h2>Built for app store trust.</h2>
+            <p class="section-lead">
+                Public privacy, terms, update, and download pages are served from
+                your own domain through Cloudflare while the AI backend stays on Hugging Face.
+            </p>
+            <div class="grid">
+                <a class="legal-card" href="/privacy-policy"><h3>Privacy Policy</h3><p>Data collection, Firebase authentication, summaries, folders, analytics, and deletion rights.</p></a>
+                <a class="legal-card" href="/terms-and-conditions"><h3>Terms</h3><p>Acceptable use, AI limitations, account responsibility, updates, and service availability.</p></a>
+                <a class="legal-card" href="/app-version"><h3>Update API</h3><p>Version metadata used by the Flutter app to send users to the latest release.</p></a>
+            </div>
+        </section>
     </main>
+    <footer class="wrap footer">
+        Lumina AI. Contact <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>
+    </footer>
+    {site_scripts()}
 </body>
 </html>
 """
@@ -663,90 +1153,51 @@ def download_app():
     <title>Download Lumina AI</title>
     <meta name="description" content="Download the latest Lumina AI Android app.">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        * {{ box-sizing: border-box; }}
-        body {{
-            margin: 0;
-            font-family: Inter, Arial, sans-serif;
-            background: #f8fafc;
-            color: #111827;
-        }}
-        .wrap {{
-            max-width: 1040px;
-            margin: auto;
-            padding: 44px 20px;
-        }}
-        .hero {{
-            display: grid;
-            grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr);
-            gap: 28px;
-            align-items: center;
-        }}
-        .panel {{
-            background: #fff;
-            border: 1px solid #e2e8f0;
-            border-radius: 18px;
-            padding: 34px;
-            box-shadow: 0 18px 45px rgba(15, 23, 42, .06);
-        }}
-        h1 {{ font-size: clamp(34px, 6vw, 58px); line-height: 1; margin: 0 0 18px; }}
-        h2 {{ margin: 0 0 14px; }}
-        p, li {{ color: #475569; line-height: 1.7; }}
-        .button {{
-            display: inline-block;
-            background: #4f46e5;
-            color: white;
-            text-decoration: none;
-            padding: 15px 24px;
-            border-radius: 12px;
-            font-weight: 800;
-            margin-top: 12px;
-        }}
-        .muted {{ color: #64748b; font-size: 14px; }}
-        .grid {{
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 16px;
-            margin-top: 24px;
-        }}
-        .card {{
-            background: #fff;
-            border: 1px solid #e2e8f0;
-            border-radius: 14px;
-            padding: 20px;
-        }}
-        @media (max-width: 780px) {{
-            .hero, .grid {{ grid-template-columns: 1fr; }}
-        }}
-    </style>
+    {site_styles()}
 </head>
 <body>
+    {site_nav()}
     <main class="wrap">
         <section class="hero">
             <div>
-                <p class="muted">Latest Android release</p>
+                <span class="eyebrow">Latest Android release</span>
                 <h1>Lumina AI</h1>
-                <p>
+                <p class="lead">
                     Convert notes, PDFs, camera scans, and images into structured summaries,
                     Q&A, flashcards, revision sheets, and professional reports.
                 </p>
                 <a class="button" href="{APP_DOWNLOAD_PATH}" download>Download APK v{APP_VERSION_NAME}</a>
-                <p class="muted">When the Play Store listing is live, this button can point to the official store URL.</p>
+                <div class="status-row">
+                    <span id="status-dot" class="dot"></span>
+                    <span id="status-label">Checking latest release metadata...</span>
+                    <span class="pill" id="version-label">Version code {APP_VERSION_CODE}</span>
+                </div>
             </div>
-            <aside class="panel">
-                <h2>Release Notes</h2>
-                <ul>
-                    {''.join(f'<li>{html.escape(note)}</li>' for note in APP_RELEASE_NOTES)}
-                </ul>
-                <p class="muted">Version code: {APP_VERSION_CODE}</p>
+            <aside class="device">
+                <div class="screen">
+                    <h2>Release Notes</h2>
+                    <ul>
+                        {''.join(f'<li>{html.escape(note)}</li>' for note in APP_RELEASE_NOTES)}
+                    </ul>
+                    <div class="scan-card">
+                        <div class="scan-line"></div>
+                        <strong>Update flow</strong>
+                        <div class="fake-line"></div>
+                        <div class="fake-line short"></div>
+                    </div>
+                </div>
             </aside>
         </section>
         <section class="grid">
-            <div class="card"><strong>Private accounts</strong><p>Email/Google sign-in, account deletion, and saved history controls.</p></div>
-            <div class="card"><strong>Organized documents</strong><p>Folders, favorites, search, and generated-document history.</p></div>
-            <div class="card"><strong>AI modes</strong><p>Student, professional, and general outputs tuned for different workflows.</p></div>
+            <div class="card"><div class="icon">ID</div><strong>Private accounts</strong><p>Email/Google sign-in, account deletion, and saved history controls.</p></div>
+            <div class="card"><div class="icon">DIR</div><strong>Organized documents</strong><p>Folders, favorites, search, and generated-document history.</p></div>
+            <div class="card"><div class="icon">AI</div><strong>AI modes</strong><p>Student, professional, and general outputs tuned for different workflows.</p></div>
         </section>
     </main>
+    <footer class="wrap footer">
+        <a href="/privacy-policy">Privacy Policy</a> | <a href="/terms-and-conditions">Terms & Conditions</a>
+    </footer>
+    {site_scripts()}
 </body>
 </html>
 """
