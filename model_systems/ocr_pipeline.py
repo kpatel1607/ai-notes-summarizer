@@ -12,6 +12,11 @@ try:
 except ImportError:
     PaddleOCR = None
 
+try:
+    from rapidocr_onnxruntime import RapidOCR
+except ImportError:
+    RapidOCR = None
+
 
 if platform.system() == "Windows":
     pytesseract.pytesseract.tesseract_cmd = (
@@ -21,7 +26,16 @@ if platform.system() == "Windows":
 
 class OCRPipeline:
     def __init__(self):
+        self.rapid_ocr = None
         self.paddle_ocr = None
+
+        if RapidOCR is not None:
+            try:
+                self.rapid_ocr = RapidOCR()
+            except Exception:
+                print("RapidOCR initialization failed:")
+                traceback.print_exc()
+                self.rapid_ocr = None
 
         if PaddleOCR is not None:
             try:
@@ -139,6 +153,27 @@ class OCRPipeline:
             raise FileNotFoundError(file_path)
 
         processed_path = self._preprocess_image(path)
+
+        if self.rapid_ocr is not None:
+            try:
+                result, _ = self.rapid_ocr(str(processed_path))
+                extracted_lines = self._lines_from_rapidocr_result(result)
+                confidence = self._confidence_from_rapidocr_result(result)
+                cleaned = self.clean_text("\n".join(extracted_lines))
+
+                if cleaned and confidence >= 0.50:
+                    self._safe_unlink_if_temp(processed_path, path)
+                    return {
+                        "text": cleaned,
+                        "source": "rapidocr_onnx_preprocessed",
+                        "confidence": confidence,
+                        "tables": [],
+                        "table_count": 0,
+                    }
+
+            except Exception:
+                print("\nRAPID OCR ERROR:")
+                traceback.print_exc()
 
         if self.paddle_ocr is not None:
             try:
@@ -332,6 +367,45 @@ class OCRPipeline:
 
         return [line["text"] for line in positioned_lines]
 
+    def _lines_from_rapidocr_result(
+        self,
+        result,
+    ) -> List[str]:
+        positioned_lines = []
+
+        if not result:
+            return []
+
+        for line in result:
+            try:
+                bbox = line[0]
+                text = str(line[1]).strip()
+            except Exception:
+                continue
+
+            if not text:
+                continue
+
+            x_values = [point[0] for point in bbox]
+            y_values = [point[1] for point in bbox]
+
+            positioned_lines.append(
+                {
+                    "x": min(x_values),
+                    "y": min(y_values),
+                    "text": text,
+                }
+            )
+
+        positioned_lines.sort(
+            key=lambda item: (
+                round(item["y"] / 14),
+                item["x"],
+            )
+        )
+
+        return [line["text"] for line in positioned_lines]
+
     def _confidence_from_paddle_result(
         self,
         result,
@@ -342,6 +416,24 @@ class OCRPipeline:
             for line in result[0]:
                 try:
                     scores.append(float(line[1][1]))
+                except Exception:
+                    pass
+
+        if not scores:
+            return 0.0
+
+        return round(sum(scores) / len(scores), 3)
+
+    def _confidence_from_rapidocr_result(
+        self,
+        result,
+    ) -> float:
+        scores = []
+
+        if result:
+            for line in result:
+                try:
+                    scores.append(float(line[2]))
                 except Exception:
                     pass
 
