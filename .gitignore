@@ -20,3 +20,5 @@ sample1.pdf
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.wrangler/
+cloudflare-worker/.wrangler/

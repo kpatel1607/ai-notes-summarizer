@@ -61,6 +61,20 @@ From this folder:
 wrangler deploy
 ```
 
+If you see this error:
+
+```text
+Could not find zone for `lumina-ai.co.in`.
+```
+
+it means the domain has not been added to this Cloudflare account yet, or Cloudflare has not finished activating the zone. You can still deploy a temporary Worker URL for testing:
+
+```bash
+wrangler deploy --config wrangler.workers-dev.toml
+```
+
+That creates a `workers.dev` URL. Use it only for testing. The Flutter app and Play Store links should still use `https://lumina-ai.co.in` after the domain zone is active.
+
 ## Cloudflare Worker Route
 
 The included `wrangler.toml` defines:
@@ -74,6 +88,29 @@ Both routes proxy to:
 
 ```text
 https://kpatel1607-lumina.hf.space
+```
+
+The route works only after `lumina-ai.co.in` is added under Cloudflare Websites and the domain nameservers at your registrar point to the nameservers Cloudflare gives you.
+
+## Fix "Could Not Find Zone"
+
+1. Open Cloudflare Dashboard.
+2. Go to Websites.
+3. Click Add a domain.
+4. Enter:
+
+```text
+lumina-ai.co.in
+```
+
+5. Choose the Free plan.
+6. Let Cloudflare scan/import DNS.
+7. At your domain registrar, replace the current nameservers with the two Cloudflare nameservers shown in the dashboard.
+8. Wait until Cloudflare shows the zone as Active.
+9. Then deploy again:
+
+```bash
+wrangler deploy
 ```
 
 ## Hugging Face Space Secrets
