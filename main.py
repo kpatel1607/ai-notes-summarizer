@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -44,7 +44,8 @@ CUSTOM_DOMAIN = os.getenv(
 ).strip().rstrip("/")
 APP_VERSION_NAME = os.getenv("APP_VERSION_NAME", "2.0.0")
 APP_VERSION_CODE = int(os.getenv("APP_VERSION_CODE", "2"))
-APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/static/Lumina-AI.apk")
+APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/download-apk")
+APK_FILE_PATH = os.getenv("APK_FILE_PATH", "static/Lumina-AI.apk")
 APP_RELEASE_NOTES = [
     "Improved AI modes for student, professional, and general summaries.",
     "Cleaner OCR handling, structured folders, favorites, and document history.",
@@ -775,7 +776,12 @@ def site_styles() -> str:
 """
 
 
-def site_nav() -> str:
+def site_nav(back_href: str | None = None) -> str:
+    if back_href:
+        nav_action = f'<a href="{html.escape(back_href)}">Back</a>'
+    else:
+        nav_action = '<a href="/download-app">Download</a>'
+
     return """
     <header class="nav">
         <div class="nav-inner">
@@ -784,13 +790,11 @@ def site_nav() -> str:
                 <span>Lumina AI</span>
             </a>
             <div class="links">
-                <a href="/download-app">Download</a>
-                <a href="/privacy-policy">Privacy</a>
-                <a href="/terms-and-conditions">Terms</a>
+                __NAV_ACTION__
             </div>
         </div>
     </header>
-"""
+""".replace("__NAV_ACTION__", nav_action)
 
 
 def site_scripts() -> str:
@@ -862,165 +866,22 @@ def legal_page(
 <head>
     <title>{html.escape(title)}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-
-        body {{
-            font-family: Inter, Arial, sans-serif;
-            background: #f8fafc;
-            color: #1e293b;
-            min-height: 100vh;
-        }}
-
-        .topbar {{
-            position: sticky;
-            top: 0;
-            background: rgba(248, 250, 252, 0.94);
-            backdrop-filter: blur(16px);
-            border-bottom: 1px solid #e2e8f0;
-            z-index: 10;
-        }}
-
-        .nav {{
-            max-width: 1080px;
-            margin: auto;
-            padding: 16px 20px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 16px;
-        }}
-
-        .brand {{
-            font-weight: 850;
-            color: #111827;
-            letter-spacing: .2px;
-        }}
-
-        .nav-links {{
-            display: flex;
-            gap: 14px;
-            flex-wrap: wrap;
-            justify-content: flex-end;
-        }}
-
-        .container {{
-            max-width: 920px;
-            margin: 38px auto;
-            background: #ffffff;
-            border-radius: 18px;
-            padding: 52px;
-            border: 1px solid #e2e8f0;
-            box-shadow: 0 18px 45px rgba(15, 23, 42, 0.06);
-        }}
-
-        .badge {{
-            display: inline-block;
-            background: #eef2ff;
-            color: #4f46e5;
-            padding: 8px 16px;
-            border-radius: 999px;
-            font-weight: 700;
-            font-size: 14px;
-            margin-bottom: 24px;
-        }}
-
-        h1 {{
-            font-size: 42px;
-            color: #111827;
-            margin-bottom: 10px;
-        }}
-
-        .subtitle {{
-            color: #64748b;
-            margin-bottom: 36px;
-            font-size: 16px;
-        }}
-
-        h2 {{
-            margin-top: 34px;
-            margin-bottom: 12px;
-            color: #111827;
-            font-size: 23px;
-        }}
-
-        p, li {{
-            line-height: 1.8;
-            color: #475569;
-            font-size: 16px;
-        }}
-
-        ul {{
-            margin-top: 12px;
-            margin-left: 22px;
-        }}
-
-        li {{
-            margin-bottom: 10px;
-        }}
-
-        a {{
-            color: #4f46e5;
-            font-weight: 600;
-            text-decoration: none;
-        }}
-
-        a:hover {{
-            text-decoration: underline;
-        }}
-
-        .footer {{
-            margin-top: 48px;
-            padding-top: 22px;
-            border-top: 1px solid #e2e8f0;
-            color: #64748b;
-            font-size: 14px;
-        }}
-
-        .notice {{
-            margin: 28px 0;
-            padding: 18px;
-            border: 1px solid #c7d2fe;
-            background: #eef2ff;
-            border-radius: 14px;
-        }}
-
-        @media (max-width: 768px) {{
-            .container {{
-                padding: 32px;
-            }}
-
-            h1 {{
-                font-size: 34px;
-            }}
-        }}
-    </style>
+    {site_styles()}
 </head>
 <body>
-    <header class="topbar">
-        <nav class="nav">
-            <a class="brand" href="/">Lumina AI</a>
-            <div class="nav-links">
-                <a href="/download-app">Download</a>
-                <a href="/privacy-policy">Privacy</a>
-                <a href="/terms-and-conditions">Terms</a>
-            </div>
-        </nav>
-    </header>
-    <main class="container">
-        <div class="badge">Lumina AI</div>
+    {site_nav("/")}
+    <main class="legal-layout">
+      <article class="legal-card">
+        <span class="eyebrow">Lumina AI legal</span>
         <h1>{html.escape(title)}</h1>
-        <p class="subtitle">{html.escape(subtitle)}</p>
+        <p class="lead">{html.escape(subtitle)}</p>
         {body}
         <div class="footer">
             © 2026 Lumina AI. All rights reserved.
             <br>
             Contact: <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>
         </div>
+      </article>
     </main>
 </body>
 </html>
@@ -1144,6 +1005,24 @@ def app_version():
     }
 
 
+@app.get("/download-apk")
+def download_apk():
+    if not os.path.exists(APK_FILE_PATH):
+        raise HTTPException(
+            status_code=404,
+            detail="APK file is not available on this deployment.",
+        )
+
+    return FileResponse(
+        APK_FILE_PATH,
+        media_type="application/vnd.android.package-archive",
+        filename=f"Lumina-AI-v{APP_VERSION_NAME}.apk",
+        headers={
+            "Cache-Control": "public, max-age=300",
+        },
+    )
+
+
 @app.get("/download-app", response_class=HTMLResponse)
 def download_app():
     return f"""
@@ -1156,7 +1035,7 @@ def download_app():
     {site_styles()}
 </head>
 <body>
-    {site_nav()}
+    {site_nav("/")}
     <main class="wrap">
         <section class="hero">
             <div>
