@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -19,6 +20,7 @@ import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth, firestore
 from datetime import datetime, timezone
 from typing import Dict, Any
+from urllib.parse import urlparse
 
 from model_systems.pipeline_router import PipelineRouter
 
@@ -27,10 +29,19 @@ load_dotenv()
 
 APP_NAME = "Lumina AI"
 CONTACT_EMAIL = "support@lumina-ai.co.in"
-BASE_URL = os.getenv(
-    "BASE_URL",
-    "https://www.lumina-ai.co.in",
+PUBLIC_BASE_URL = os.getenv(
+    "PUBLIC_BASE_URL",
+    os.getenv(
+        "BASE_URL",
+        "https://www.lumina-ai.co.in",
+    ),
 ).rstrip("/")
+BASE_URL = PUBLIC_BASE_URL
+
+CUSTOM_DOMAIN = os.getenv(
+    "CUSTOM_DOMAIN",
+    "https://www.lumina-ai.co.in",
+).strip().rstrip("/")
 APP_VERSION_NAME = os.getenv("APP_VERSION_NAME", "2.0.0")
 APP_VERSION_CODE = int(os.getenv("APP_VERSION_CODE", "2"))
 APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/static/Lumina-AI.apk")
@@ -76,6 +87,30 @@ SPACE_HOST = os.getenv("SPACE_HOST", "").strip()
 if SPACE_HOST:
     ALLOWED_ORIGINS.append(f"https://{SPACE_HOST}")
 
+if PUBLIC_BASE_URL:
+    ALLOWED_ORIGINS.append(PUBLIC_BASE_URL)
+
+if CUSTOM_DOMAIN:
+    ALLOWED_ORIGINS.append(CUSTOM_DOMAIN)
+
+ALLOWED_ORIGINS = list(dict.fromkeys(ALLOWED_ORIGINS))
+
+ALLOWED_HOSTS = os.getenv(
+    "ALLOWED_HOSTS",
+    "localhost,127.0.0.1,*.hf.space,www.lumina-ai.co.in,lumina-ai.co.in",
+).split(",")
+
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in ALLOWED_HOSTS
+    if host.strip()
+]
+
+for configured_url in [PUBLIC_BASE_URL, CUSTOM_DOMAIN]:
+    parsed_host = urlparse(configured_url).netloc
+    if parsed_host and parsed_host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(parsed_host)
+
 MAX_INPUT_LENGTH = int(
     os.getenv("MAX_INPUT_LENGTH", "45000")
 )
@@ -101,7 +136,16 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=ALLOWED_HOSTS,
+)
+if os.path.isdir("static"):
+    app.mount(
+        "/static",
+        StaticFiles(directory="static"),
+        name="static",
+    )
 
 
 @app.middleware("http")
@@ -117,11 +161,15 @@ async def security_headers_middleware(request: Request, call_next):
     return response
 
 
+def public_base_url() -> str:
+    return PUBLIC_BASE_URL
+
+
 def app_download_url() -> str:
     if APP_DOWNLOAD_PATH.startswith("http"):
         return APP_DOWNLOAD_PATH
 
-    return f"{BASE_URL}{APP_DOWNLOAD_PATH}"
+    return f"{public_base_url()}{APP_DOWNLOAD_PATH}"
 
 
 @app.exception_handler(RateLimitExceeded)
@@ -180,9 +228,24 @@ class GenerateRequest(BaseModel):
     )
 
 
+def require_firebase() -> None:
+    if firebase_admin._apps and firestore_db is not None:
+        return
+
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "Authentication service is not configured. "
+            "Please set FIREBASE_SERVICE_ACCOUNT_JSON."
+        ),
+    )
+
+
 def verify_firebase_user(
     authorization: str = Header(None),
 ):
+    require_firebase()
+
     if not authorization:
         raise HTTPException(
             status_code=401,
@@ -217,7 +280,10 @@ def verify_firebase_user(
         )
 
 
-firestore_db = firestore.client()
+firestore_db = None
+
+if firebase_admin._apps:
+    firestore_db = firestore.client()
 
 
 def clean_input_text(text: str) -> str:

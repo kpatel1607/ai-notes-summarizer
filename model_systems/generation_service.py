@@ -141,7 +141,7 @@ class GenerationService:
         )
 
         # Qwen 1.5B is weak for large structured prompts.
-        if prompt_words > 1800:
+        if prompt_words > 2200:
             return True
 
         lower_prompt = prompt.lower()
@@ -151,15 +151,7 @@ class GenerationService:
             "recommended strategy: hierarchical_summary",
             "free-tier limit applied: true",
             "only limited chunks were included",
-            "document metadata:",
-            "chunk summaries:",
-            "multiple pages",
-            "long document",
-            "academic report",
-            "research paper",
-            "textbook",
-            "internship report",
-            "structured final answer",
+            "limit applied: true",
         ]
 
         if any(
@@ -175,7 +167,7 @@ class GenerationService:
             )
         )
 
-        if chunk_count >= 6:
+        if chunk_count >= 10:
             return True
 
         return False
@@ -344,6 +336,18 @@ class GenerationService:
                 timeout=120,
             )
 
+            if response.status_code == 429:
+                return {
+                    "success": False,
+                    "error": (
+                        "Gemini quota exceeded. Please wait or check "
+                        "your API quota."
+                    ),
+                    "generated_text": "",
+                    "provider": "gemini",
+                    "model": self.gemini_model_name,
+                }
+
             if response.status_code >= 400:
                 return {
                     "success": False,
@@ -382,7 +386,6 @@ class GenerationService:
                 "provider": "gemini",
                 "model": self.gemini_model_name,
             }
-
         except Exception as e:
             return {
                 "success": False,

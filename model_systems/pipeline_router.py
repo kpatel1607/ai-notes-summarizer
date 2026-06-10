@@ -308,6 +308,11 @@ class PipelineRouter:
             task: str,
     ) -> Dict[str, Any]:
 
+        pipeline_output = prepared.get(
+            "pipeline_output",
+            {},
+        )
+
         generation_result = self.generation_service.generate(
             prepared["generation_prompt"],
             max_tokens=2500,

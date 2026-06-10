@@ -48,6 +48,17 @@ class PromptBuilder:
             semantic_chunks=semantic_chunks,
         )
 
+        if self._should_use_compact_prompt(
+            text=text,
+            semantic_chunks=semantic_chunks,
+            structure=structure,
+        ):
+            return self._compact_prompt(
+                mode=mode,
+                task=task,
+                text=text,
+            )
+
         if mode == "student":
             return self._student_prompt(
                 task=task,
@@ -175,6 +186,118 @@ class PromptBuilder:
             return 8
 
         return 6
+
+    def _should_use_compact_prompt(
+        self,
+        text: str,
+        semantic_chunks: Dict[str, Any],
+        structure: Dict[str, Any],
+    ) -> bool:
+
+        metadata = semantic_chunks.get(
+            "metadata",
+            {},
+        )
+
+        structure_metadata = structure.get(
+            "metadata",
+            {},
+        )
+
+        word_count = len(text.split())
+
+        if word_count > 650:
+            return False
+
+        if metadata.get("limit_applied") or metadata.get("long_document"):
+            return False
+
+        if structure_metadata.get("table_count", 0) > 0:
+            return False
+
+        if structure_metadata.get("layout_block_count", 0) > 0:
+            return False
+
+        return True
+
+    def _compact_prompt(
+        self,
+        mode: str,
+        task: str,
+        text: str,
+    ) -> str:
+
+        if mode == "student":
+            task_instruction = self._student_task_instruction(task)
+            mode_goal = "Create a useful study output for a student."
+
+        elif mode == "professional":
+            task_instruction = self._professional_task_instruction(task)
+            mode_goal = "Create a professional, business-ready output."
+
+        else:
+            task_instruction = self._general_task_instruction(task)
+            mode_goal = "Create a clean and useful response."
+
+        return f"""
+You are Lumina AI.
+
+Mode:
+{mode}
+
+Task:
+{task}
+
+Goal:
+{mode_goal}
+
+Task instruction:
+{task_instruction}
+
+Rules:
+{self._compact_rules_for_mode(mode)}
+
+Content:
+{text[:3500]}
+"""
+
+    def _compact_rules_for_mode(
+        self,
+        mode: str,
+    ) -> str:
+
+        common_rules = [
+            "- Start directly with the output.",
+            "- Use only the provided content.",
+            "- Do not invent facts, examples, names, dates, or numbers.",
+            "- If something is not clear from the content, say it is not clearly available.",
+            "- Keep formatting readable and avoid repetition.",
+        ]
+
+        if mode == "student":
+            return "\n".join(
+                [
+                    *common_rules,
+                    "- Use simple, exam-friendly language.",
+                    "- Preserve definitions, formulas, key terms, and requirements exactly when present.",
+                ]
+            )
+
+        if mode == "professional":
+            return "\n".join(
+                [
+                    *common_rules,
+                    "- Preserve names, dates, owners, decisions, risks, requirements, and deadlines when present.",
+                    "- Mark missing owners, dates, and decisions as Not specified.",
+                ]
+            )
+
+        return "\n".join(
+            [
+                *common_rules,
+                "- Be concise but complete.",
+            ]
+        )
 
     def _chunk_score(
         self,
