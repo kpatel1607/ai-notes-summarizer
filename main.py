@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +14,7 @@ import os
 import re
 import html
 import json
+import tempfile
 import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth, firestore
 from datetime import datetime, timezone
@@ -27,6 +28,14 @@ load_dotenv()
 APP_NAME = "Lumina AI"
 CONTACT_EMAIL = "support@lumina-ai.co.in"
 BASE_URL = "https://www.lumina-ai.co.in"
+APP_VERSION_NAME = os.getenv("APP_VERSION_NAME", "2.0.0")
+APP_VERSION_CODE = int(os.getenv("APP_VERSION_CODE", "2"))
+APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/static/Lumina-AI.apk")
+APP_RELEASE_NOTES = [
+    "Improved AI modes for student, professional, and general summaries.",
+    "Cleaner OCR handling, structured folders, favorites, and document history.",
+    "Updated privacy, terms, account deletion, and download pages.",
+]
 
 LUMINA_GENERATION_PROVIDER = os.getenv(
     "LUMINA_GENERATION_PROVIDER",
@@ -53,8 +62,18 @@ ALLOWED_ORIGINS = os.getenv(
     "https://ai-notes-summarizer-ck5l.onrender.com,http://localhost:3000,http://localhost:5173,http://localhost:8080",
 ).split(",")
 
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in ALLOWED_ORIGINS
+    if origin.strip()
+]
+
 MAX_INPUT_LENGTH = int(
     os.getenv("MAX_INPUT_LENGTH", "45000")
+)
+
+MAX_UPLOAD_BYTES = int(
+    os.getenv("MAX_UPLOAD_BYTES", str(15 * 1024 * 1024))
 )
 
 DAILY_FREE_LIMIT = int(
@@ -77,6 +96,26 @@ app.add_middleware(SlowAPIMiddleware)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = (
+        "camera=(), microphone=(), geolocation=()"
+    )
+
+    return response
+
+
+def app_download_url() -> str:
+    if APP_DOWNLOAD_PATH.startswith("http"):
+        return APP_DOWNLOAD_PATH
+
+    return f"{BASE_URL}{APP_DOWNLOAD_PATH}"
+
+
 @app.exception_handler(RateLimitExceeded)
 def rate_limit_handler(
     request: Request,
@@ -92,14 +131,7 @@ def rate_limit_handler(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5000",
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:8080",
-        "https://www.lumina-ai.co.in",
-        "https://lumina-ai.co.in",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -333,19 +365,51 @@ def legal_page(
 
         body {{
             font-family: Inter, Arial, sans-serif;
-            background: linear-gradient(135deg, #eef2ff, #f8fafc);
+            background: #f8fafc;
             color: #1e293b;
             min-height: 100vh;
-            padding: 40px 20px;
+        }}
+
+        .topbar {{
+            position: sticky;
+            top: 0;
+            background: rgba(248, 250, 252, 0.94);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid #e2e8f0;
+            z-index: 10;
+        }}
+
+        .nav {{
+            max-width: 1080px;
+            margin: auto;
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }}
+
+        .brand {{
+            font-weight: 850;
+            color: #111827;
+            letter-spacing: .2px;
+        }}
+
+        .nav-links {{
+            display: flex;
+            gap: 14px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
         }}
 
         .container {{
             max-width: 920px;
-            margin: auto;
+            margin: 38px auto;
             background: #ffffff;
-            border-radius: 28px;
+            border-radius: 18px;
             padding: 52px;
-            box-shadow: 0 12px 45px rgba(15, 23, 42, 0.08);
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 18px 45px rgba(15, 23, 42, 0.06);
         }}
 
         .badge {{
@@ -411,6 +475,14 @@ def legal_page(
             font-size: 14px;
         }}
 
+        .notice {{
+            margin: 28px 0;
+            padding: 18px;
+            border: 1px solid #c7d2fe;
+            background: #eef2ff;
+            border-radius: 14px;
+        }}
+
         @media (max-width: 768px) {{
             .container {{
                 padding: 32px;
@@ -423,6 +495,16 @@ def legal_page(
     </style>
 </head>
 <body>
+    <header class="topbar">
+        <nav class="nav">
+            <a class="brand" href="/">Lumina AI</a>
+            <div class="nav-links">
+                <a href="/download-app">Download</a>
+                <a href="/privacy-policy">Privacy</a>
+                <a href="/terms-and-conditions">Terms</a>
+            </div>
+        </nav>
+    </header>
     <main class="container">
         <div class="badge">Lumina AI</div>
         <h1>{html.escape(title)}</h1>
@@ -477,84 +559,222 @@ def health_check():
     return {
         "app": APP_NAME,
         "status": "healthy",
-        "version": "2.0.0",
+        "version": APP_VERSION_NAME,
         "generation_provider": LUMINA_GENERATION_PROVIDER,
         "model_system_enabled": True,
     }
 
 
+@app.get("/app-version")
+def app_version():
+    return {
+        "app": APP_NAME,
+        "latestVersionName": APP_VERSION_NAME,
+        "latestVersionCode": APP_VERSION_CODE,
+        "minimumSupportedVersionCode": 1,
+        "forceUpdate": False,
+        "downloadUrl": app_download_url(),
+        "updatePageUrl": f"{BASE_URL}/update",
+        "releaseNotes": APP_RELEASE_NOTES,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @app.get("/download-app", response_class=HTMLResponse)
 def download_app():
-    return """
+    return f"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <title>Download Lumina AI</title>
+    <meta name="description" content="Download the latest Lumina AI Android app.">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {{ box-sizing: border-box; }}
+        body {{
+            margin: 0;
+            font-family: Inter, Arial, sans-serif;
+            background: #f8fafc;
+            color: #111827;
+        }}
+        .wrap {{
+            max-width: 1040px;
+            margin: auto;
+            padding: 44px 20px;
+        }}
+        .hero {{
+            display: grid;
+            grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr);
+            gap: 28px;
+            align-items: center;
+        }}
+        .panel {{
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            border-radius: 18px;
+            padding: 34px;
+            box-shadow: 0 18px 45px rgba(15, 23, 42, .06);
+        }}
+        h1 {{ font-size: clamp(34px, 6vw, 58px); line-height: 1; margin: 0 0 18px; }}
+        h2 {{ margin: 0 0 14px; }}
+        p, li {{ color: #475569; line-height: 1.7; }}
+        .button {{
+            display: inline-block;
+            background: #4f46e5;
+            color: white;
+            text-decoration: none;
+            padding: 15px 24px;
+            border-radius: 12px;
+            font-weight: 800;
+            margin-top: 12px;
+        }}
+        .muted {{ color: #64748b; font-size: 14px; }}
+        .grid {{
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-top: 24px;
+        }}
+        .card {{
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            padding: 20px;
+        }}
+        @media (max-width: 780px) {{
+            .hero, .grid {{ grid-template-columns: 1fr; }}
+        }}
+    </style>
 </head>
-<body style="font-family: Arial, sans-serif; background:#f8fafc; color:#111827; min-height:100vh; display:flex; align-items:center; justify-content:center;">
-    <main style="max-width:560px; background:white; padding:40px; border-radius:28px; text-align:center;">
-        <h1>Download Lumina AI</h1>
-        <p>Lumina AI helps you convert PDFs, images, camera scans, and notes into clean AI-powered study summaries.</p>
-        <a style="display:inline-block; background:#4f46e5; color:white; text-decoration:none; padding:15px 28px; border-radius:16px; font-weight:700;" href="/static/lumina-ai.apk" download>
-            Download APK
-        </a>
-        <p style="margin-top:22px; color:#64748b;">Play Store version coming soon.</p>
+<body>
+    <main class="wrap">
+        <section class="hero">
+            <div>
+                <p class="muted">Latest Android release</p>
+                <h1>Lumina AI</h1>
+                <p>
+                    Convert notes, PDFs, camera scans, and images into structured summaries,
+                    Q&A, flashcards, revision sheets, and professional reports.
+                </p>
+                <a class="button" href="{APP_DOWNLOAD_PATH}" download>Download APK v{APP_VERSION_NAME}</a>
+                <p class="muted">When the Play Store listing is live, this button can point to the official store URL.</p>
+            </div>
+            <aside class="panel">
+                <h2>Release Notes</h2>
+                <ul>
+                    {''.join(f'<li>{html.escape(note)}</li>' for note in APP_RELEASE_NOTES)}
+                </ul>
+                <p class="muted">Version code: {APP_VERSION_CODE}</p>
+            </aside>
+        </section>
+        <section class="grid">
+            <div class="card"><strong>Private accounts</strong><p>Email/Google sign-in, account deletion, and saved history controls.</p></div>
+            <div class="card"><strong>Organized documents</strong><p>Folders, favorites, search, and generated-document history.</p></div>
+            <div class="card"><strong>AI modes</strong><p>Student, professional, and general outputs tuned for different workflows.</p></div>
+        </section>
     </main>
 </body>
 </html>
 """
 
 
+@app.get("/update", response_class=HTMLResponse)
+def update_app():
+    return download_app()
+
+
 @app.get("/privacy-policy", response_class=HTMLResponse)
 def privacy_policy():
     body = f"""
         <p>
-            Lumina AI respects user privacy and is designed to collect only the
-            information required to provide authentication, saved history, and
-            AI-powered summarization features.
+            Lumina AI respects user privacy and collects only the information
+            needed to provide authentication, AI summarization, saved document
+            history, folders, favorites, analytics, safety, and account support.
         </p>
+
+        <div class="notice">
+            This policy is written for the Lumina AI app, backend API, policy
+            website, APK download page, and related Firebase-backed services.
+        </div>
 
         <h2>Information We Collect</h2>
         <ul>
-            <li>Name, username, and email address during account creation.</li>
-            <li>Authentication data required for login and account access.</li>
-            <li>Uploaded or pasted notes, extracted text, and generated summaries.</li>
-            <li>Saved folders, favorites, and summary history linked to the user's account.</li>
+            <li>Account information such as name, username, email address, profile photo URL, provider, email verification status, account creation date, and last login time.</li>
+            <li>Authentication information handled by Firebase Authentication, including email/password login, Google sign-in, verification email status, password reset flows, and session tokens.</li>
+            <li>Notes, pasted text, extracted PDF text, camera OCR text, uploaded image OCR text, selected AI mode, selected output task, generated summaries, markdown, plain text, sections, and word-count metadata.</li>
+            <li>Document organization data such as folders, favorites, document history, creation timestamps, and user-specific usage counters.</li>
+            <li>App diagnostics and analytics events such as app opens, crashes, performance errors, update prompts, and feature usage where Firebase Analytics or Crashlytics are enabled.</li>
+            <li>Technical request information such as IP-derived rate-limit data, request timing, API errors, and service health information needed to protect the backend.</li>
         </ul>
 
         <h2>How We Use Information</h2>
         <ul>
-            <li>To generate AI summaries and study notes.</li>
-            <li>To save and organize user-specific summary history.</li>
-            <li>To provide account-based access and security.</li>
-            <li>To improve reliability, performance, and user experience.</li>
+            <li>To authenticate users and protect account access.</li>
+            <li>To extract text from images, camera scans, and PDFs on the device where supported.</li>
+            <li>To send notes and extracted text to the backend for AI summarization and formatting.</li>
+            <li>To save generated documents, folders, favorites, and usage limits to the user's account.</li>
+            <li>To detect crashes, measure reliability, prevent abuse, apply rate limits, and improve the product experience.</li>
+            <li>To notify users about important app updates and route them to the official download page.</li>
         </ul>
 
         <h2>AI Processing</h2>
         <p>
             Text submitted for summarization may be processed by AI model providers
-            used by Lumina AI. Users should avoid uploading highly sensitive,
-            confidential, or legally restricted content.
+            used by Lumina AI, including Gemini or compatible configured model
+            providers. Outputs can be inaccurate or incomplete, so users should
+            review important results before relying on them. Users should avoid
+            uploading highly sensitive, confidential, illegal, medical, legal,
+            financial, or restricted content unless they have the right to do so.
         </p>
 
         <h2>Third-Party Services</h2>
+        <ul>
+            <li>Firebase Authentication for sign-in, verification, password reset, and account identity.</li>
+            <li>Cloud Firestore for user profiles, summaries, folders, favorites, and daily usage counters.</li>
+            <li>Firebase App Check, Analytics, and Crashlytics for abuse protection, diagnostics, app-open analytics, and crash reports.</li>
+            <li>Google sign-in where the user chooses Google authentication.</li>
+            <li>Google ML Kit or device OCR libraries for image/camera text recognition in the app.</li>
+            <li>Configured AI model providers for summarization and output generation.</li>
+        </ul>
+
+        <h2>Data Retention</h2>
         <p>
-            Lumina AI may use Firebase for authentication and database storage,
-            Google services for sign-in where enabled, and Gemini, Ollama,
-            or compatible AI model providers for text processing.
+            Saved summaries, folders, favorites, and profile records are retained
+            while the account remains active. Users can delete individual documents
+            or delete their account from the Profile section. Usage logs and
+            diagnostic records may remain for a limited period where required for
+            security, fraud prevention, legal compliance, or service reliability.
         </p>
 
         <h2>Data Security</h2>
         <p>
             Lumina AI uses account-based storage and user identifiers to keep saved
-            summaries separated between users. We do not sell user data.
+            summaries separated between users. API requests require Firebase
+            authentication, the backend applies rate limits, and Firebase App Check
+            can be used to reduce unauthorized access. No online system can be
+            guaranteed completely secure. We do not sell user data.
         </p>
 
         <h2>User Control</h2>
+        <ul>
+            <li>Users may delete generated summaries and folders from inside the app.</li>
+            <li>Users may reset passwords, update profile information, and manage sign-in methods supported by Firebase.</li>
+            <li>Users may delete their account and associated saved data from the Profile section.</li>
+            <li>Users may contact support for privacy questions or deletion assistance.</li>
+        </ul>
+
+        <h2>Children's Privacy</h2>
         <p>
-            Users may delete summaries from inside the app. Users may also delete
-            their account and saved data from the Profile section.
+            Lumina AI is intended for general study and productivity use. Children
+            should use the service only with appropriate parent, guardian, or school
+            permission where required by law.
+        </p>
+
+        <h2>International Processing</h2>
+        <p>
+            Data may be processed by cloud providers and AI services in regions
+            outside the user's location, subject to those providers' safeguards and
+            terms.
         </p>
 
         <h2>Contact</h2>
@@ -589,6 +809,8 @@ def terms_and_conditions():
         <ul>
             <li>Users must not upload illegal, harmful, abusive, or infringing content.</li>
             <li>Users are responsible for the content they upload or paste.</li>
+            <li>Users must have the right to upload, process, summarize, or store the documents they submit.</li>
+            <li>Users must not attempt to bypass rate limits, abuse backend APIs, reverse engineer protected services, or disrupt Lumina AI infrastructure.</li>
             <li>Users should verify important academic, legal, medical, or professional information independently.</li>
         </ul>
 
@@ -597,6 +819,15 @@ def terms_and_conditions():
             AI-generated summaries may contain mistakes, omissions, or imperfect
             interpretations. Lumina AI is a study assistant, not a replacement for
             professional, academic, legal, or medical advice.
+        </p>
+
+        <h2>Accounts and Security</h2>
+        <p>
+            Users are responsible for maintaining account security, using accurate
+            sign-in information, and protecting devices where Lumina AI is installed.
+            Some security options, such as password reset, email verification,
+            recovery email records, and multi-factor authentication, depend on
+            Firebase and platform availability.
         </p>
 
         <h2>Account Security</h2>
@@ -610,6 +841,37 @@ def terms_and_conditions():
             Users may delete their account and associated saved data from the app's
             Profile section. Some third-party providers may retain limited records
             according to their own policies.
+        </p>
+
+        <h2>Downloads and Updates</h2>
+        <p>
+            Lumina AI may provide update notices through the app and an official
+            download page. Users should install updates only from Lumina AI's
+            official website or official app-store listing when available. APK
+            installation may require Android device permissions controlled by the
+            operating system.
+        </p>
+
+        <h2>Free Limits and Fair Use</h2>
+        <p>
+            Lumina AI may apply daily generation limits, request limits, and other
+            safeguards to keep the service reliable. Limits may change as the app
+            evolves.
+        </p>
+
+        <h2>Intellectual Property</h2>
+        <p>
+            Lumina AI, its branding, app design, backend, and website are owned by
+            their respective rights holders. Users retain responsibility for their
+            uploaded content and must respect third-party copyrights.
+        </p>
+
+        <h2>Disclaimer and Liability</h2>
+        <p>
+            Lumina AI is provided on an "as available" basis. To the maximum extent
+            permitted by law, Lumina AI is not liable for losses arising from
+            inaccurate AI outputs, user-submitted content, service interruptions,
+            third-party services, or unsupported device configurations.
         </p>
 
         <h2>Availability</h2>
@@ -868,6 +1130,148 @@ def generate_v2(
             status_code=500,
             detail="Failed to generate output. Please try again.",
         )
+
+
+@app.post("/v2/generate-file")
+@limiter.limit("10/minute")
+async def generate_file_v2(
+    request: Request,
+    file: UploadFile = File(...),
+    mode: str = Form(default="student"),
+    task: str = Form(default="important_notes"),
+    authorization: str = Header(None),
+):
+    decoded_user = verify_firebase_user(
+        authorization,
+    )
+
+    user_uid = decoded_user.get("uid")
+
+    if not user_uid:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Firebase user",
+        )
+
+    selected_mode = validate_mode(mode)
+    selected_task = validate_task(selected_mode, task)
+
+    filename = file.filename or "upload"
+    extension = os.path.splitext(filename)[1].lower()
+
+    if extension not in {
+        ".pdf",
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".bmp",
+    }:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type",
+        )
+
+    temp_path = None
+
+    try:
+        total_size = 0
+
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=extension,
+        ) as temp_file:
+            temp_path = temp_file.name
+
+            while True:
+                chunk = await file.read(1024 * 1024)
+
+                if not chunk:
+                    break
+
+                total_size += len(chunk)
+
+                if total_size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            "Uploaded file is too large. "
+                            f"Maximum allowed size is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
+                        ),
+                    )
+
+                temp_file.write(chunk)
+
+            if total_size == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Uploaded file is empty",
+                )
+
+        result = lumina_router.generate_from_file(
+            file_path=temp_path,
+            mode=selected_mode,
+            task=selected_task,
+        )
+
+        formatted = result.get("formatted_output", {})
+        generated_text = formatted.get("markdown", "")
+
+        if not generated_text:
+            error_detail = extract_generation_error(result)
+
+            raise HTTPException(
+                status_code=500,
+                detail=error_detail,
+            )
+
+        usage_count = check_and_increment_daily_usage(user_uid)
+        pipeline_output = result.get("pipeline_output", {})
+        extraction = pipeline_output.get("extraction", {})
+        structure = pipeline_output.get("structure", {})
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "title": formatted.get("title", ""),
+                "markdown": formatted.get("markdown", ""),
+                "plainText": formatted.get("plain_text", ""),
+                "sections": formatted.get("sections", []),
+                "sectionCount": formatted.get("section_count", 0),
+                "mode": formatted.get("mode", selected_mode),
+                "task": formatted.get("task", selected_task),
+                "format": formatted.get("format", ""),
+                "provider": formatted.get("provider", ""),
+                "model": formatted.get("model", ""),
+                "usageCount": usage_count,
+                "dailyLimit": DAILY_FREE_LIMIT,
+                "extractionSource": extraction.get("source", ""),
+                "extractionConfidence": extraction.get("confidence", 0),
+                "tableCount": structure.get("metadata", {}).get(
+                    "table_count",
+                    0,
+                ),
+                "parserType": structure.get("parser_type", ""),
+            }
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        print("V2 file generation error:", str(e))
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to process uploaded file. Please try again.",
+        )
+
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
 
 
 @app.post("/summarize")

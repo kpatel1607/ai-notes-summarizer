@@ -1,5 +1,6 @@
 fastapi
 uvicorn
+python-multipart
 openai
 python-dotenv
 slowapi==0.1.9
@@ -7,3 +8,9 @@ firebase-admin
 pymupdf
 pillow
 pytesseract
+paddleocr
+paddlepaddle
+opencv-python-headless
+transformers
+torch
+sentence-transformers

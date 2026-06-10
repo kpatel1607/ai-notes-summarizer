@@ -154,6 +154,25 @@ class PipelineRouter:
             normalized["normalized_text"],
         )
 
+        extracted_tables = extracted.get("tables", [])
+
+        if extracted_tables:
+            text_structure["tables"] = [
+                *text_structure.get("tables", []),
+                *[
+                    {
+                        "source": "pdf_extractor",
+                        "rows": table,
+                    }
+                    for table in extracted_tables
+                ],
+            ]
+
+            text_structure["metadata"] = {
+                **text_structure.get("metadata", {}),
+                "table_count": len(text_structure["tables"]),
+            }
+
         structure = self.structure_parser.merge_text_and_layout_structure(
             text_structure=text_structure,
             layout_structure=layout_structure,
@@ -309,6 +328,7 @@ class PipelineRouter:
             ],
             mode=mode,
             task=task,
+            structure=pipeline_output.get("structure", {}),
             model=generation_result.get(
                 "model",
                 "",
@@ -429,6 +449,7 @@ class PipelineRouter:
             ],
             mode=mode,
             task=task,
+            structure=pipeline_output.get("structure", {}),
             model=final_generation.get(
                 "model",
                 "",

@@ -1,4 +1,5 @@
 import re
+import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -9,10 +10,16 @@ try:
 except ImportError:
     PPStructure = None
 
+try:
+    from transformers import pipeline
+except ImportError:
+    pipeline = None
+
 
 class DocumentStructureParser:
     def __init__(self):
         self.pp_structure = None
+        self.section_classifier = None
 
         if PPStructure is not None:
             try:
@@ -23,6 +30,21 @@ class DocumentStructureParser:
             except Exception as e:
                 print(f"PPStructure initialization failed: {e}")
                 self.pp_structure = None
+
+        if pipeline is not None:
+            try:
+                model_name = os.getenv(
+                    "LUMINA_STRUCTURE_MODEL",
+                    "facebook/bart-large-mnli",
+                )
+
+                self.section_classifier = pipeline(
+                    "zero-shot-classification",
+                    model=model_name,
+                )
+            except Exception as e:
+                print(f"Structure classifier initialization failed: {e}")
+                self.section_classifier = None
 
     def _is_valid_heading(self, line: str) -> bool:
         line = line.strip()
@@ -243,16 +265,24 @@ class DocumentStructureParser:
         roman_items = self._detect_roman_items(normalized_text)
         key_value_fields = self._detect_key_value_fields(normalized_text)
         paragraphs = self._detect_paragraphs(normalized_text)
+        tables = self._detect_text_tables(normalized_text)
+        section_labels = self._classify_sections(sections, paragraphs)
 
         return {
-            "parser_type": "rule_based_text_parser",
+            "parser_type": (
+                "transformer_assisted_text_parser"
+                if self.section_classifier is not None
+                else "rule_based_text_parser"
+            ),
             "title": title,
             "sections": sections,
+            "section_labels": section_labels,
             "questions": questions,
             "bullets": bullets,
             "numbered_items": numbered_items,
             "roman_items": roman_items,
             "key_value_fields": key_value_fields,
+            "tables": tables,
             "paragraphs": paragraphs,
             "layout_blocks": [],
             "metadata": {
@@ -263,6 +293,7 @@ class DocumentStructureParser:
                 "numbered_item_count": len(numbered_items),
                 "roman_item_count": len(roman_items),
                 "key_value_count": len(key_value_fields),
+                "table_count": len(tables),
                 "paragraph_count": len(paragraphs),
                 "layout_block_count": 0,
                 "noise_removed": noise_result["noise_removed"],
@@ -385,6 +416,11 @@ class DocumentStructureParser:
             layout_structure,
         )
 
+        merged["tables"] = [
+            *merged.get("tables", []),
+            *self.extract_layout_tables(layout_structure),
+        ]
+
         merged["layout_parser_type"] = layout_structure.get(
             "parser_type",
             "unknown",
@@ -400,6 +436,7 @@ class DocumentStructureParser:
                 "metadata",
                 {},
             ).get("layout_types", []),
+            "table_count": len(merged.get("tables", [])),
         }
 
         return merged
@@ -438,6 +475,32 @@ class DocumentStructureParser:
             )
 
         return sections
+
+    def extract_layout_tables(
+        self,
+        layout_structure: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        tables = []
+
+        for block in layout_structure.get("layout_blocks", []):
+            block_type = str(block.get("type", "")).lower()
+            text = block.get("text", "").strip()
+
+            if "table" not in block_type or not text:
+                continue
+
+            rows = self._rows_from_tabular_text(text)
+
+            if rows:
+                tables.append(
+                    {
+                        "source": "layout_model",
+                        "rows": rows,
+                        "bbox": block.get("bbox", []),
+                    }
+                )
+
+        return tables
 
     def _extract_text_from_ppstructure_res(
         self,
@@ -673,3 +736,184 @@ class DocumentStructureParser:
             ]
 
         return paragraphs
+
+    def _detect_text_tables(
+        self,
+        text: str,
+    ) -> List[Dict[str, Any]]:
+        tables = []
+        current_lines = []
+
+        for line in text.splitlines():
+            stripped = line.strip()
+
+            if self._looks_tabular(stripped):
+                current_lines.append(stripped)
+                continue
+
+            if current_lines:
+                rows = self._rows_from_tabular_text("\n".join(current_lines))
+
+                if rows:
+                    tables.append(
+                        {
+                            "source": "text_layout",
+                            "rows": rows,
+                        }
+                    )
+
+                current_lines = []
+
+        if current_lines:
+            rows = self._rows_from_tabular_text("\n".join(current_lines))
+
+            if rows:
+                tables.append(
+                    {
+                        "source": "text_layout",
+                        "rows": rows,
+                    }
+                )
+
+        return tables
+
+    def _looks_tabular(
+        self,
+        line: str,
+    ) -> bool:
+        if not line:
+            return False
+
+        if "|" in line and line.count("|") >= 2:
+            return True
+
+        if "\t" in line:
+            return True
+
+        if len(re.split(r"\s{2,}", line)) >= 3:
+            return True
+
+        return False
+
+    def _rows_from_tabular_text(
+        self,
+        text: str,
+    ) -> List[List[str]]:
+        rows = []
+
+        for line in text.splitlines():
+            stripped = line.strip().strip("|")
+
+            if not stripped:
+                continue
+
+            if re.fullmatch(r"[-:| ]+", stripped):
+                continue
+
+            if "|" in stripped:
+                cells = [cell.strip() for cell in stripped.split("|")]
+            elif "\t" in stripped:
+                cells = [cell.strip() for cell in stripped.split("\t")]
+            else:
+                cells = [cell.strip() for cell in re.split(r"\s{2,}", stripped)]
+
+            cells = [cell for cell in cells if cell]
+
+            if len(cells) >= 2:
+                rows.append(cells)
+
+        return rows if len(rows) >= 2 else []
+
+    def _classify_sections(
+        self,
+        sections: List[Dict[str, Any]],
+        paragraphs: List[str],
+    ) -> List[Dict[str, Any]]:
+        candidates = [
+            "summary",
+            "objective",
+            "definition",
+            "requirement",
+            "action item",
+            "decision",
+            "risk",
+            "table data",
+            "question answer",
+            "example",
+            "conclusion",
+        ]
+
+        samples = []
+
+        for index, section in enumerate(sections[:8]):
+            text = (
+                f"{section.get('heading', '')} "
+                f"{' '.join(section.get('content', []))}"
+            ).strip()
+
+            if text:
+                samples.append((index, text[:600]))
+
+        if not samples:
+            samples = [
+                (index, paragraph[:600])
+                for index, paragraph in enumerate(paragraphs[:6])
+            ]
+
+        labels = []
+
+        for index, text in samples:
+            if self.section_classifier is None:
+                label = self._heuristic_section_label(text)
+                score = 0.0
+            else:
+                try:
+                    result = self.section_classifier(
+                        text,
+                        candidate_labels=candidates,
+                        multi_label=False,
+                    )
+                    label = result["labels"][0]
+                    score = float(result["scores"][0])
+                except Exception:
+                    label = self._heuristic_section_label(text)
+                    score = 0.0
+
+            labels.append(
+                {
+                    "source_index": index,
+                    "label": label,
+                    "score": round(score, 3),
+                }
+            )
+
+        return labels
+
+    def _heuristic_section_label(
+        self,
+        text: str,
+    ) -> str:
+        lower = text.lower()
+
+        if "deadline" in lower or "owner" in lower or "action" in lower:
+            return "action item"
+
+        if "risk" in lower or "issue" in lower:
+            return "risk"
+
+        if "?" in lower or lower.startswith(("what", "why", "how")):
+            return "question answer"
+
+        if "conclusion" in lower:
+            return "conclusion"
+
+        if "objective" in lower or "purpose" in lower:
+            return "objective"
+
+        if "definition" in lower or "means" in lower:
+            return "definition"
+
+        if "requirement" in lower or "must" in lower or "shall" in lower:
+            return "requirement"
+
+        return "summary"

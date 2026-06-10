@@ -105,6 +105,7 @@ class PromptBuilder:
 
         elif mode == "professional":
             preferred = [
+                "table",
                 "key_value",
                 "section",
                 "numbered_item",
@@ -537,6 +538,9 @@ Task-specific instruction:
 Rules:
 - Start directly with the output. Do not introduce yourself.
 - Do not say "Here is", "Hello", or "I have processed".
+- Use only the provided document content. Never invent missing facts, formulas, names, dates, examples, or answers.
+- Prioritize correctness over length. If the source is unclear, write "Not clearly available in the provided content."
+- Keep terminology faithful to the source document and do not change technical meanings.
 - Use simple, exam-friendly language.
 - Preserve important concepts, definitions, rules, numbers, and requirements from the provided chunks.
 - Explain difficult terms briefly only if needed.
@@ -549,6 +553,7 @@ Rules:
 - Do not add textbook names, external resources, examples, facts, or assumptions not present in the content.
 - Do not use markdown tables unless explicitly requested.
 - If chunk limit was applied, clearly mention: "This output is based on the processed portion of the document."
+- End with a short "Source Coverage" line stating whether the answer used the full processed text or limited chunks.
 
 {document_context}
 
@@ -589,6 +594,9 @@ Task-specific instruction:
 Rules:
 - Start directly with the output. Do not introduce yourself.
 - Do not say "Here is", "Hello", or "I have processed".
+- Use only the provided document content. Do not invent business context, owners, dates, risks, commitments, or metrics.
+- Prioritize accuracy, traceability, and actionability over decoration.
+- Mark missing owners, dates, or decisions as "Not specified" instead of guessing.
 - Keep the output clear and structured.
 - Preserve useful professional metadata such as names, dates, roles, company names, contact details, requirements, deadlines, and legal/compliance points if present.
 - Extract decisions, risks, priorities, requirements, deadlines, and action items when relevant.
@@ -602,6 +610,7 @@ Rules:
 - Do not exaggerate or assume missing details.
 - Do not use markdown tables unless explicitly requested.
 - If chunk limit was applied, clearly mention that the output is based only on the processed portion.
+- End with a compact "Confidence Notes" section only when the source is incomplete, ambiguous, or chunk-limited.
 
 {document_context}
 
@@ -642,6 +651,9 @@ Task-specific instruction:
 Rules:
 - Start directly with the output. Do not introduce yourself.
 - Do not say "Here is", "Hello", or "I have processed".
+- Use only the provided document content and do not add outside facts.
+- Preserve the original meaning, scope, and uncertainty.
+- Prefer a shorter accurate answer over a longer speculative answer.
 - Be concise but complete.
 - Keep the original meaning.
 - Use readable formatting.
@@ -653,6 +665,7 @@ Rules:
 - Do not invent details.
 - Do not use markdown tables unless explicitly requested.
 - If chunk limit was applied, clearly mention that the output is based only on the processed portion.
+- If the task is clean_text, preserve all meaningful details while fixing spacing, OCR noise, and structure.
 
 {document_context}
 
@@ -671,13 +684,13 @@ Full Content:
     ) -> str:
 
         instructions = {
-            "important_notes": "Create important notes with headings, definitions, key points, and exam-focused takeaways.",
-            "qa_generation": "Generate useful question-answer pairs from the content.",
-            "answer_questions": "Answer only the questions found in the content using the provided material.",
-            "flashcards": "Create flashcards in Q/A format for revision.",
-            "mcqs": "Create multiple-choice questions with four options and mark the correct answer.",
-            "beginner_explanation": "Explain the content as if teaching a beginner.",
-            "revision_sheet": "Create a compact revision sheet with definitions, key facts, formulas if present, and quick review points.",
+            "important_notes": "Create important notes with headings, definitions, key points, exam-focused takeaways, and any formulas or dates exactly as provided.",
+            "qa_generation": "Generate question-answer pairs from the content only. Cover major ideas without creating questions that require outside knowledge.",
+            "answer_questions": "Answer only the questions found in the content using the provided material. If an answer is not present, say it is not clearly available.",
+            "flashcards": "Create compact flashcards in Term/Answer format for revision. Each answer must be directly supported by the content.",
+            "mcqs": "Create multiple-choice questions with four options and mark the correct answer. Distractors must be plausible but not misleading, and each answer must be supported by the content.",
+            "beginner_explanation": "Explain the content as if teaching a beginner while preserving correct terminology and source meaning.",
+            "revision_sheet": "Create a compact revision sheet with definitions, key facts, formulas if present, quick review points, and common exam traps only when supported by the content.",
         }
 
         return instructions.get(
@@ -691,13 +704,13 @@ Full Content:
     ) -> str:
 
         instructions = {
-            "executive_summary": "Create an executive summary with context, key points, and conclusion.",
-            "main_points": "Extract the main points in a clean numbered list.",
-            "action_items": "Extract action items, owners if mentioned, deadlines if mentioned, and priority.",
-            "meeting_minutes": "Create meeting minutes with agenda, discussion points, decisions, and action items.",
-            "structured_report": "Convert the content into a structured report with headings and concise sections.",
-            "table_format": "Convert suitable information into clean tables.",
-            "email_draft": "Draft a professional email based only on the provided content.",
+            "executive_summary": "Create an executive summary with context, key points, implications, risks, and conclusion only where supported.",
+            "main_points": "Extract the main points in a clean numbered list, preserving names, numbers, and dates exactly.",
+            "action_items": "Extract action items, owners if mentioned, deadlines if mentioned, status if mentioned, and priority if inferable from explicit wording.",
+            "meeting_minutes": "Create meeting minutes with agenda, attendees if present, discussion points, decisions, and action items.",
+            "structured_report": "Convert the content into a structured report with headings, concise sections, findings, and conclusion only where supported.",
+            "table_format": "Convert suitable information into one or more complete markdown tables. Use the first row as headers when available, infer short headers only from visible source fields, never leave blank-only rows, and use Not specified for missing cells.",
+            "email_draft": "Draft a professional email based only on the provided content and do not add promises, dates, or attachments that are not present.",
         }
 
         return instructions.get(

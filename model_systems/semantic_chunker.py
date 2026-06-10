@@ -24,6 +24,7 @@ class SemanticChunker:
         numbered_items = structure.get("numbered_items", [])
         roman_items = structure.get("roman_items", [])
         key_value_fields = structure.get("key_value_fields", [])
+        tables = structure.get("tables", [])
 
         effective_max_chunks = self._resolve_max_chunks(
             max_chunks=max_chunks,
@@ -35,6 +36,7 @@ class SemanticChunker:
             numbered_items=numbered_items,
             roman_items=roman_items,
             key_value_fields=key_value_fields,
+            tables=tables,
             sections=sections,
             paragraphs=paragraphs,
             text=text,
@@ -84,6 +86,7 @@ class SemanticChunker:
         numbered_items: List[Dict[str, Any]],
         roman_items: List[Any],
         key_value_fields: List[Dict[str, Any]],
+        tables: List[Dict[str, Any]],
         sections: List[Dict[str, Any]],
         paragraphs: List[str],
         text: str,
@@ -120,6 +123,14 @@ class SemanticChunker:
             chunks.extend(
                 self._chunks_from_key_values(
                     key_value_fields,
+                    max_words,
+                )
+            )
+
+        if tables:
+            chunks.extend(
+                self._chunks_from_tables(
+                    tables,
                     max_words,
                 )
             )
@@ -284,6 +295,66 @@ class SemanticChunker:
                 )
 
         return chunks
+
+    def _chunks_from_tables(
+        self,
+        tables: List[Dict[str, Any]],
+        max_words: int,
+    ) -> List[Dict[str, Any]]:
+        chunks = []
+
+        for index, table in enumerate(tables):
+            rows = table.get("rows", [])
+
+            if not rows:
+                continue
+
+            markdown = self._table_to_markdown(rows)
+
+            if self._is_low_value_content(markdown):
+                continue
+
+            for part in self._split_by_word_limit(markdown, max_words):
+                chunks.append(
+                    {
+                        "chunk_type": "table",
+                        "title": f"Table {index + 1}",
+                        "content": part,
+                        "source_index": index,
+                        "priority": 95,
+                    }
+                )
+
+        return chunks
+
+    def _table_to_markdown(
+        self,
+        rows: List[List[str]],
+    ) -> str:
+        if not rows:
+            return ""
+
+        width = max(len(row) for row in rows)
+        normalized_rows = [
+            [str(cell).strip() for cell in row]
+            + [""] * (width - len(row))
+            for row in rows
+        ]
+
+        header = normalized_rows[0]
+        separator = ["---"] * width
+        body = normalized_rows[1:]
+
+        return "\n".join(
+            [
+                "| " + " | ".join(header) + " |",
+                "| " + " | ".join(separator) + " |",
+                *[
+                    "| " + " | ".join(row) + " |"
+                    for row in body
+                ],
+            ]
+        )
 
     def _chunks_from_sections(
         self,

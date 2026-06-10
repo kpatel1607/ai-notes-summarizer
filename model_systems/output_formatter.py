@@ -11,11 +11,18 @@ class OutputFormatter:
         task: str = "short_summary",
         model: str = "",
         provider: str = "",
+        structure: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
 
         cleaned_markdown = self._clean_markdown(
             processed_text,
         )
+
+        if task == "table_format":
+            cleaned_markdown = self._ensure_table_output(
+                cleaned_markdown,
+                structure or {},
+            )
 
         sections = self._extract_sections(
             cleaned_markdown,
@@ -42,6 +49,137 @@ class OutputFormatter:
             "model": model,
             "provider": provider,
         }
+
+    def _ensure_table_output(
+        self,
+        text: str,
+        structure: Dict[str, Any],
+    ) -> str:
+        if self._has_valid_markdown_table(text):
+            return self._remove_blank_table_rows(text)
+
+        tables = structure.get("tables", [])
+
+        for table in tables:
+            rows = table.get("rows", [])
+            markdown = self._rows_to_markdown_table(rows)
+
+            if markdown:
+                return markdown
+
+        key_values = structure.get("key_value_fields", [])
+
+        if key_values:
+            rows = [["Field", "Value"]]
+
+            for item in key_values:
+                rows.append(
+                    [
+                        item.get("key", "Field"),
+                        item.get("value", "Not specified"),
+                    ]
+                )
+
+            markdown = self._rows_to_markdown_table(rows)
+
+            if markdown:
+                return markdown
+
+        lines = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip()
+        ]
+
+        rows = [["Item", "Details"]]
+
+        for index, line in enumerate(lines[:20], start=1):
+            line = re.sub(r"^[-*\d.]+\s*", "", line).strip()
+
+            if line:
+                rows.append([str(index), line])
+
+        markdown = self._rows_to_markdown_table(rows)
+
+        return markdown or text
+
+    def _has_valid_markdown_table(
+        self,
+        text: str,
+    ) -> bool:
+        lines = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip()
+        ]
+
+        table_lines = [
+            line
+            for line in lines
+            if line.startswith("|") and line.endswith("|")
+        ]
+
+        if len(table_lines) < 3:
+            return False
+
+        meaningful_rows = [
+            line
+            for line in table_lines
+            if not re.fullmatch(r"\|[\s\-:|]+\|", line)
+            and any(cell.strip() for cell in line.strip("|").split("|"))
+        ]
+
+        return len(meaningful_rows) >= 2
+
+    def _remove_blank_table_rows(
+        self,
+        text: str,
+    ) -> str:
+        cleaned_lines = []
+
+        for line in text.splitlines():
+            if line.strip().startswith("|"):
+                cells = [
+                    cell.strip()
+                    for cell in line.strip().strip("|").split("|")
+                ]
+
+                if not any(cells):
+                    continue
+
+            cleaned_lines.append(line)
+
+        return "\n".join(cleaned_lines).strip()
+
+    def _rows_to_markdown_table(
+        self,
+        rows: List[List[str]],
+    ) -> str:
+        if not rows or len(rows) < 2:
+            return ""
+
+        width = max(len(row) for row in rows)
+        normalized_rows = [
+            [str(cell or "Not specified").strip() for cell in row]
+            + ["Not specified"] * (width - len(row))
+            for row in rows
+        ]
+
+        header = normalized_rows[0]
+        separator = ["---"] * width
+        body = normalized_rows[1:]
+
+        return "\n".join(
+            [
+                "| " + " | ".join(header) + " |",
+                "| " + " | ".join(separator) + " |",
+                *[
+                    "| " + " | ".join(row) + " |"
+                    for row in body
+                    if any(cell and cell != "Not specified" for cell in row)
+                ],
+            ]
+        ).strip()
 
     def _clean_markdown(
         self,
