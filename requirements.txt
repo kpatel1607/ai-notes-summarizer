@@ -10,6 +10,3 @@ pillow
 pytesseract
 opencv-python-headless
 rapidocr-onnxruntime
-transformers
-torch
-sentence-transformers

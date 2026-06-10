@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+import os
 import platform
 import traceback
 
@@ -28,26 +29,41 @@ class OCRPipeline:
     def __init__(self):
         self.rapid_ocr = None
         self.paddle_ocr = None
+        self.enable_paddle = os.getenv(
+            "LUMINA_ENABLE_PADDLEOCR",
+            "false",
+        ).lower().strip() == "true"
 
+    def _get_rapid_ocr(self):
         if RapidOCR is not None:
             try:
-                self.rapid_ocr = RapidOCR()
+                if self.rapid_ocr is None:
+                    self.rapid_ocr = RapidOCR()
             except Exception:
                 print("RapidOCR initialization failed:")
                 traceback.print_exc()
                 self.rapid_ocr = None
 
+        return self.rapid_ocr
+
+    def _get_paddle_ocr(self):
+        if not self.enable_paddle:
+            return None
+
         if PaddleOCR is not None:
             try:
-                self.paddle_ocr = PaddleOCR(
-                    use_angle_cls=True,
-                    lang="en",
-                    show_log=False,
-                )
+                if self.paddle_ocr is None:
+                    self.paddle_ocr = PaddleOCR(
+                        use_angle_cls=True,
+                        lang="en",
+                        show_log=False,
+                    )
             except Exception:
                 print("PaddleOCR initialization failed:")
                 traceback.print_exc()
                 self.paddle_ocr = None
+
+        return self.paddle_ocr
 
     def extract_from_text(
         self,
@@ -154,9 +170,11 @@ class OCRPipeline:
 
         processed_path = self._preprocess_image(path)
 
-        if self.rapid_ocr is not None:
+        rapid_ocr = self._get_rapid_ocr()
+
+        if rapid_ocr is not None:
             try:
-                result, _ = self.rapid_ocr(str(processed_path))
+                result, _ = rapid_ocr(str(processed_path))
                 extracted_lines = self._lines_from_rapidocr_result(result)
                 confidence = self._confidence_from_rapidocr_result(result)
                 cleaned = self.clean_text("\n".join(extracted_lines))
@@ -175,9 +193,11 @@ class OCRPipeline:
                 print("\nRAPID OCR ERROR:")
                 traceback.print_exc()
 
-        if self.paddle_ocr is not None:
+        paddle_ocr = self._get_paddle_ocr()
+
+        if paddle_ocr is not None:
             try:
-                result = self.paddle_ocr.ocr(str(processed_path))
+                result = paddle_ocr.ocr(str(processed_path))
                 extracted_lines = self._lines_from_paddle_result(result)
                 confidence = self._confidence_from_paddle_result(result)
                 cleaned = self.clean_text("\n".join(extracted_lines))

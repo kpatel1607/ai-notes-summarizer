@@ -27,7 +27,10 @@ load_dotenv()
 
 APP_NAME = "Lumina AI"
 CONTACT_EMAIL = "support@lumina-ai.co.in"
-BASE_URL = "https://www.lumina-ai.co.in"
+BASE_URL = os.getenv(
+    "BASE_URL",
+    "https://www.lumina-ai.co.in",
+).rstrip("/")
 APP_VERSION_NAME = os.getenv("APP_VERSION_NAME", "2.0.0")
 APP_VERSION_CODE = int(os.getenv("APP_VERSION_CODE", "2"))
 APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/static/Lumina-AI.apk")
@@ -67,6 +70,11 @@ ALLOWED_ORIGINS = [
     for origin in ALLOWED_ORIGINS
     if origin.strip()
 ]
+
+SPACE_HOST = os.getenv("SPACE_HOST", "").strip()
+
+if SPACE_HOST:
+    ALLOWED_ORIGINS.append(f"https://{SPACE_HOST}")
 
 MAX_INPUT_LENGTH = int(
     os.getenv("MAX_INPUT_LENGTH", "45000")

@@ -10,16 +10,15 @@ try:
 except ImportError:
     PPStructure = None
 
-try:
-    from transformers import pipeline
-except ImportError:
-    pipeline = None
-
 
 class DocumentStructureParser:
     def __init__(self):
         self.pp_structure = None
         self.section_classifier = None
+        self.enable_structure_model = os.getenv(
+            "LUMINA_ENABLE_STRUCTURE_MODEL",
+            "false",
+        ).lower().strip() == "true"
 
         if PPStructure is not None:
             try:
@@ -31,11 +30,13 @@ class DocumentStructureParser:
                 print(f"PPStructure initialization failed: {e}")
                 self.pp_structure = None
 
-        if pipeline is not None:
+        if self.enable_structure_model:
             try:
+                from transformers import pipeline
+
                 model_name = os.getenv(
                     "LUMINA_STRUCTURE_MODEL",
-                    "facebook/bart-large-mnli",
+                    "typeform/distilbert-base-uncased-mnli",
                 )
 
                 self.section_classifier = pipeline(
