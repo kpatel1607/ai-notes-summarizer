@@ -42,16 +42,16 @@ CUSTOM_DOMAIN = os.getenv(
     "CUSTOM_DOMAIN",
     "https://lumina-ai.co.in",
 ).strip().rstrip("/")
-APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.3")
-APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "5"))
+APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.4")
+APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "6"))
 APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/download-apk")
 APK_FILE_PATH = os.getenv("APK_FILE_PATH", "static/Lumina-AI.apk")
 APP_RELEASE_NOTES = [
-    "Improved table output with real structured rows for app, PDF, and text export.",
-    "Reduced prompt complexity for short inputs such as email drafts and four-paragraph notes.",
-    "Cleaned raw markdown artifacts such as unnecessary bold asterisks from generated outputs.",
-    "Improved task-specific formatting so output modes look more distinct and professional.",
-    "Added polished in-app rendering for headings, lists, and markdown tables.",
+    "Improved dark and light mode readability for AI Workspace and output option chips.",
+    "Added theme-aware text, icons, borders, and backgrounds across the main workspace.",
+    "Added animated depth, pressed-card feedback, and a livelier workspace hero.",
+    "Improved card contrast and visual polish across document input, quick actions, usage, folders, and results.",
+    "Kept table/output formatting improvements from the previous release.",
 ]
 
 LUMINA_GENERATION_PROVIDER = os.getenv(
