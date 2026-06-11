@@ -42,16 +42,16 @@ CUSTOM_DOMAIN = os.getenv(
     "CUSTOM_DOMAIN",
     "https://lumina-ai.co.in",
 ).strip().rstrip("/")
-APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.1")
-APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "3"))
+APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.2")
+APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "4"))
 APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/download-apk")
 APK_FILE_PATH = os.getenv("APK_FILE_PATH", "static/Lumina-AI.apk")
 APP_RELEASE_NOTES = [
-    "Removed Firebase MFA/2FA options because they require a paid Firebase upgrade.",
-    "Improved update download flow with a direct APK link from the update prompt.",
+    "Generation requests now use the official Lumina domain instead of the Hugging Face origin.",
+    "Added folder selection before generation so new documents can be saved directly into folders.",
+    "Improved folder validation, duplicate prevention, sorting, and favorites filtering.",
     "Improved AI modes for student, professional, and general summaries.",
-    "Cleaner OCR handling, structured folders, favorites, and document history.",
-    "Updated privacy, terms, account deletion, and download pages.",
+    "Cleaner app guide text and document history experience.",
 ]
 
 LUMINA_GENERATION_PROVIDER = os.getenv(
