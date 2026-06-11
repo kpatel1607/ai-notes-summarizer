@@ -42,8 +42,8 @@ CUSTOM_DOMAIN = os.getenv(
     "CUSTOM_DOMAIN",
     "https://lumina-ai.co.in",
 ).strip().rstrip("/")
-APP_VERSION_NAME = os.getenv("APP_VERSION_NAME", "2.0.1")
-APP_VERSION_CODE = int(os.getenv("APP_VERSION_CODE", "3"))
+APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.1")
+APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "3"))
 APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/download-apk")
 APK_FILE_PATH = os.getenv("APK_FILE_PATH", "static/Lumina-AI.apk")
 APP_RELEASE_NOTES = [
@@ -172,7 +172,7 @@ def app_download_url() -> str:
     if APP_DOWNLOAD_PATH.startswith("http"):
         return APP_DOWNLOAD_PATH
 
-    return f"{public_base_url()}{APP_DOWNLOAD_PATH}"
+    return f"{public_base_url()}{APP_DOWNLOAD_PATH}?v={APP_VERSION_CODE}"
 
 
 @app.exception_handler(RateLimitExceeded)
@@ -1020,7 +1020,11 @@ def download_apk():
         media_type="application/vnd.android.package-archive",
         filename=f"Lumina-AI-v{APP_VERSION_NAME}.apk",
         headers={
-            "Cache-Control": "public, max-age=300",
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Lumina-App-Version": APP_VERSION_NAME,
+            "X-Lumina-App-Version-Code": str(APP_VERSION_CODE),
         },
     )
 

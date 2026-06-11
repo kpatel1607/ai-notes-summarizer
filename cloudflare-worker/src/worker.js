@@ -35,7 +35,7 @@ export default {
         signal: AbortSignal.timeout(timeoutMs),
       });
 
-      return withCors(rewriteOriginResponse(response, env), request, env);
+      return withCors(rewriteOriginResponse(response, env, request), request, env);
     } catch (error) {
       const isTimeout =
         error && (error.name === "TimeoutError" || error.name === "AbortError");
@@ -93,7 +93,7 @@ function buildOriginRequest(request, env) {
   return new Request(originUrl.toString(), init);
 }
 
-function rewriteOriginResponse(response, env) {
+function rewriteOriginResponse(response, env, request) {
   const headers = new Headers(response.headers);
 
   headers.delete("content-security-policy");
@@ -113,6 +113,13 @@ function rewriteOriginResponse(response, env) {
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   headers.set("X-Lumina-Edge", "cloudflare-worker");
+
+  const requestUrl = new URL(request.url);
+  if (requestUrl.pathname === "/download-apk") {
+    headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    headers.set("Pragma", "no-cache");
+    headers.set("Expires", "0");
+  }
 
   return new Response(response.body, {
     status: response.status,
