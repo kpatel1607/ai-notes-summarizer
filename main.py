@@ -42,16 +42,16 @@ CUSTOM_DOMAIN = os.getenv(
     "CUSTOM_DOMAIN",
     "https://lumina-ai.co.in",
 ).strip().rstrip("/")
-APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.4")
-APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "6"))
+APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.5")
+APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "7"))
 APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/download-apk")
 APK_FILE_PATH = os.getenv("APK_FILE_PATH", "static/Lumina-AI.apk")
 APP_RELEASE_NOTES = [
-    "Improved dark and light mode readability for AI Workspace and output option chips.",
-    "Added theme-aware text, icons, borders, and backgrounds across the main workspace.",
-    "Added animated depth, pressed-card feedback, and a livelier workspace hero.",
-    "Improved card contrast and visual polish across document input, quick actions, usage, folders, and results.",
-    "Kept table/output formatting improvements from the previous release.",
+    "Fixed email draft output so empty model templates are repaired from the original source text.",
+    "Verified all Student, Professional, and General output API formats through the backend router.",
+    "Changed Android package from com.example.notes_summarizer_app to com.luminaai.notes for Play Store readiness.",
+    "Improved export cache handling so it no longer depends on a hardcoded package path.",
+    "Kept workspace contrast, animation, table, and output formatting improvements.",
 ]
 
 LUMINA_GENERATION_PROVIDER = os.getenv(

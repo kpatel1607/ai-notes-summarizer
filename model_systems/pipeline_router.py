@@ -334,6 +334,7 @@ class PipelineRouter:
             mode=mode,
             task=task,
             structure=pipeline_output.get("structure", {}),
+            source_text=pipeline_output.get("final_text", ""),
             model=generation_result.get(
                 "model",
                 "",
@@ -455,6 +456,7 @@ class PipelineRouter:
             mode=mode,
             task=task,
             structure=pipeline_output.get("structure", {}),
+            source_text=pipeline_output.get("final_text", ""),
             model=final_generation.get(
                 "model",
                 "",

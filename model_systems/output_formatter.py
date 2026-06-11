@@ -12,6 +12,7 @@ class OutputFormatter:
         model: str = "",
         provider: str = "",
         structure: Dict[str, Any] | None = None,
+        source_text: str = "",
     ) -> Dict[str, Any]:
 
         cleaned_markdown = self._clean_markdown(
@@ -21,6 +22,7 @@ class OutputFormatter:
         cleaned_markdown = self._apply_task_shape(
             cleaned_markdown,
             task,
+            source_text=source_text,
         )
 
         if task == "table_format":
@@ -59,11 +61,12 @@ class OutputFormatter:
         self,
         text: str,
         task: str,
+        source_text: str = "",
     ) -> str:
         cleaned = text.strip()
 
         if task == "email_draft":
-            return self._repair_email_output(cleaned)
+            return self._repair_email_output(cleaned, source_text)
 
         if task == "action_items" and not self._has_valid_markdown_table(cleaned):
             return self._action_items_to_table(cleaned)
@@ -103,8 +106,12 @@ class OutputFormatter:
     def _repair_email_output(
         self,
         text: str,
+        source_text: str = "",
     ) -> str:
-        if re.search(r"^subject\s*:", text, flags=re.IGNORECASE | re.MULTILINE):
+        if (
+            re.search(r"^subject\s*:", text, flags=re.IGNORECASE | re.MULTILINE)
+            and not self._is_empty_email_shell(text)
+        ):
             return text
 
         lines = [
@@ -115,15 +122,94 @@ class OutputFormatter:
 
         body = "\n\n".join(lines) if lines else text.strip()
 
+        if not body or self._is_empty_email_shell(body):
+            body = self._email_body_from_source(source_text)
+
         return "\n\n".join(
             [
-                "Subject: Not specified",
+                f"Subject: {self._infer_email_subject(source_text)}",
                 "Dear Recipient,",
                 body,
                 "Regards,",
                 "[Your Name]",
             ]
         ).strip()
+
+    def _is_empty_email_shell(
+        self,
+        text: str,
+    ) -> bool:
+        cleaned_lines = [
+            line.strip().lower().strip("[]")
+            for line in text.splitlines()
+            if line.strip()
+        ]
+
+        shell_terms = {
+            "subject:",
+            "subject: not specified",
+            "dear recipient,",
+            "dear recipient",
+            "hello,",
+            "hi,",
+            "body",
+            "email body",
+            "regards,",
+            "sincerely,",
+            "best regards,",
+            "your name",
+            "sender name",
+        }
+
+        useful_lines = [
+            line
+            for line in cleaned_lines
+            if line not in shell_terms
+            and not re.fullmatch(r"subject:\s*", line)
+        ]
+
+        useful_words = " ".join(useful_lines).split()
+
+        return len(useful_words) < 8
+
+    def _email_body_from_source(
+        self,
+        source_text: str,
+    ) -> str:
+        cleaned = re.sub(r"\s+", " ", source_text or "").strip()
+
+        if not cleaned:
+            return "The required email details are not clearly available in the provided content."
+
+        sentences = [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", cleaned)
+            if sentence.strip()
+        ]
+
+        if not sentences:
+            sentences = [cleaned]
+
+        body_sentences = sentences[:5]
+
+        return " ".join(body_sentences)
+
+    def _infer_email_subject(
+        self,
+        source_text: str,
+    ) -> str:
+        cleaned = re.sub(r"\s+", " ", source_text or "").strip()
+
+        if not cleaned:
+            return "Not specified"
+
+        first_sentence = re.split(r"(?<=[.!?])\s+", cleaned)[0]
+        subject = first_sentence.strip(" .")
+
+        if len(subject.split()) > 10:
+            subject = " ".join(subject.split()[:10])
+
+        return subject[:90] or "Not specified"
 
     def _action_items_to_table(
         self,
