@@ -42,11 +42,13 @@ CUSTOM_DOMAIN = os.getenv(
     "CUSTOM_DOMAIN",
     "https://lumina-ai.co.in",
 ).strip().rstrip("/")
-APP_VERSION_NAME = os.getenv("APP_VERSION_NAME", "2.0.0")
-APP_VERSION_CODE = int(os.getenv("APP_VERSION_CODE", "2"))
+APP_VERSION_NAME = os.getenv("APP_VERSION_NAME", "2.0.1")
+APP_VERSION_CODE = int(os.getenv("APP_VERSION_CODE", "3"))
 APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/download-apk")
 APK_FILE_PATH = os.getenv("APK_FILE_PATH", "static/Lumina-AI.apk")
 APP_RELEASE_NOTES = [
+    "Removed Firebase MFA/2FA options because they require a paid Firebase upgrade.",
+    "Improved update download flow with a direct APK link from the update prompt.",
     "Improved AI modes for student, professional, and general summaries.",
     "Cleaner OCR handling, structured folders, favorites, and document history.",
     "Updated privacy, terms, account deletion, and download pages.",
