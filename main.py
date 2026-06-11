@@ -1012,7 +1012,8 @@ def health_check():
 
 @app.get("/app-version")
 def app_version():
-    return {
+    return JSONResponse(
+        {
         "app": APP_NAME,
         "latestVersionName": APP_VERSION_NAME,
         "latestVersionCode": APP_VERSION_CODE,
@@ -1022,7 +1023,13 @@ def app_version():
         "updatePageUrl": f"{BASE_URL}/update",
         "releaseNotes": APP_RELEASE_NOTES,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
-    }
+        },
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/download-apk")
@@ -1069,7 +1076,7 @@ def download_app():
                     Convert notes, PDFs, camera scans, and images into structured summaries,
                     Q&A, flashcards, revision sheets, and professional reports.
                 </p>
-                <a class="button" href="{APP_DOWNLOAD_PATH}" download>Download APK v{APP_VERSION_NAME}</a>
+                <a class="button" id="download-apk-button" href="{APP_DOWNLOAD_PATH}?v={APP_VERSION_CODE}" download>Download APK v{APP_VERSION_NAME}</a>
                 <div class="status-row">
                     <span id="status-dot" class="dot"></span>
                     <span id="status-label">Checking latest release metadata...</span>
@@ -1101,6 +1108,23 @@ def download_app():
         <a href="/privacy-policy">Privacy Policy</a> | <a href="/terms-and-conditions">Terms & Conditions</a>
     </footer>
     {site_scripts()}
+    <script>
+        const downloadButton = document.getElementById("download-apk-button");
+        if (downloadButton) {{
+            let clicked = false;
+            downloadButton.addEventListener("click", () => {{
+                if (clicked) {{
+                    return;
+                }}
+                clicked = true;
+                downloadButton.textContent = "Downloading Lumina AI...";
+                window.setTimeout(() => {{
+                    clicked = false;
+                    downloadButton.textContent = "Download APK v{APP_VERSION_NAME}";
+                }}, 6000);
+            }});
+        }}
+    </script>
 </body>
 </html>
 """
