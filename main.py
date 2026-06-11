@@ -1229,9 +1229,8 @@ def terms_and_conditions():
         <p>
             Users are responsible for maintaining account security, using accurate
             sign-in information, and protecting devices where Lumina AI is installed.
-            Some security options, such as password reset, email verification,
-            recovery email records, and multi-factor authentication, depend on
-            Firebase and platform availability.
+            Password reset, email verification, and recovery email records depend
+            on Firebase and platform availability.
         </p>
 
         <h2>Account Security</h2>
