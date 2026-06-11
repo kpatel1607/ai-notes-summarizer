@@ -18,6 +18,11 @@ class OutputFormatter:
             processed_text,
         )
 
+        cleaned_markdown = self._apply_task_shape(
+            cleaned_markdown,
+            task,
+        )
+
         if task == "table_format":
             cleaned_markdown = self._ensure_table_output(
                 cleaned_markdown,
@@ -50,6 +55,133 @@ class OutputFormatter:
             "provider": provider,
         }
 
+    def _apply_task_shape(
+        self,
+        text: str,
+        task: str,
+    ) -> str:
+        cleaned = text.strip()
+
+        if task == "email_draft":
+            return self._repair_email_output(cleaned)
+
+        if task == "action_items" and not self._has_valid_markdown_table(cleaned):
+            return self._action_items_to_table(cleaned)
+
+        if task == "meeting_minutes":
+            return self._ensure_named_sections(
+                cleaned,
+                ["Agenda", "Discussion", "Decisions", "Action Items"],
+            )
+
+        if task == "structured_report":
+            return self._ensure_named_sections(
+                cleaned,
+                ["Overview", "Findings", "Details", "Risks or Gaps", "Conclusion"],
+            )
+
+        if task == "executive_summary":
+            return self._ensure_named_sections(
+                cleaned,
+                ["Context", "Key Points", "Implications", "Next Steps"],
+            )
+
+        if task == "beginner_explanation":
+            return self._ensure_named_sections(
+                cleaned,
+                ["Big Idea", "Simple Explanation", "Key Terms", "Quick Recap"],
+            )
+
+        if task == "revision_sheet":
+            return self._ensure_named_sections(
+                cleaned,
+                ["Must Know", "Definitions", "Quick Facts", "Final Review"],
+            )
+
+        return cleaned
+
+    def _repair_email_output(
+        self,
+        text: str,
+    ) -> str:
+        if re.search(r"^subject\s*:", text, flags=re.IGNORECASE | re.MULTILINE):
+            return text
+
+        lines = [
+            line.strip(" -")
+            for line in text.splitlines()
+            if line.strip()
+        ]
+
+        body = "\n\n".join(lines) if lines else text.strip()
+
+        return "\n\n".join(
+            [
+                "Subject: Not specified",
+                "Dear Recipient,",
+                body,
+                "Regards,",
+                "[Your Name]",
+            ]
+        ).strip()
+
+    def _action_items_to_table(
+        self,
+        text: str,
+    ) -> str:
+        lines = [
+            re.sub(r"^[-*\d.]+\s*", "", line).strip()
+            for line in text.splitlines()
+            if line.strip()
+        ]
+
+        rows = [["Action", "Owner", "Deadline", "Priority", "Notes"]]
+
+        for line in lines[:20]:
+            if not line:
+                continue
+
+            rows.append(
+                [
+                    line,
+                    "Not specified",
+                    "Not specified",
+                    "Not specified",
+                    "Not specified",
+                ]
+            )
+
+        return self._rows_to_markdown_table(rows) or text
+
+    def _ensure_named_sections(
+        self,
+        text: str,
+        sections: List[str],
+    ) -> str:
+        lower = text.lower()
+
+        if sum(1 for section in sections if section.lower() in lower) >= 2:
+            return text
+
+        lines = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip()
+        ]
+
+        if not lines:
+            return text
+
+        return "\n\n".join(
+            [
+                f"{sections[0]}\n{lines[0]}",
+                *[
+                    f"{section}\nNot clearly available in the provided content."
+                    for section in sections[1:]
+                ],
+            ]
+        )
+
     def _ensure_table_output(
         self,
         text: str,
@@ -57,6 +189,20 @@ class OutputFormatter:
     ) -> str:
         if self._has_valid_markdown_table(text):
             return self._remove_blank_table_rows(text)
+
+        lines = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip()
+        ]
+
+        parsed_rows = self._rows_from_text_patterns(lines)
+
+        if parsed_rows:
+            markdown = self._rows_to_markdown_table(parsed_rows)
+
+            if markdown:
+                return markdown
 
         tables = structure.get("tables", [])
 
@@ -85,12 +231,6 @@ class OutputFormatter:
             if markdown:
                 return markdown
 
-        lines = [
-            line.strip()
-            for line in text.splitlines()
-            if line.strip()
-        ]
-
         rows = [["Item", "Details"]]
 
         for index, line in enumerate(lines[:20], start=1):
@@ -102,6 +242,47 @@ class OutputFormatter:
         markdown = self._rows_to_markdown_table(rows)
 
         return markdown or text
+
+    def _rows_from_text_patterns(
+        self,
+        lines: List[str],
+    ) -> List[List[str]]:
+        key_value_rows = [["Field", "Value"]]
+
+        for line in lines:
+            cleaned = re.sub(r"^[-*\d.]+\s*", "", line).strip()
+
+            if ":" in cleaned:
+                key, value = cleaned.split(":", 1)
+
+                if key.strip() and value.strip():
+                    key_value_rows.append(
+                        [
+                            key.strip(),
+                            value.strip(),
+                        ]
+                    )
+
+        if len(key_value_rows) >= 3:
+            return key_value_rows
+
+        column_rows = []
+
+        for line in lines:
+            if "|" in line:
+                cells = [
+                    cell.strip()
+                    for cell in line.strip("|").split("|")
+                    if cell.strip()
+                ]
+
+                if len(cells) >= 2:
+                    column_rows.append(cells)
+
+        if len(column_rows) >= 2:
+            return column_rows
+
+        return []
 
     def _has_valid_markdown_table(
         self,
@@ -203,6 +384,25 @@ class OutputFormatter:
         cleaned = re.sub(
             r"^(#{1,6})\s+\*\*(.*?)\*\*$",
             r"\1 \2",
+            cleaned,
+            flags=re.MULTILINE,
+        )
+
+        cleaned = re.sub(
+            r"\*\*(.*?)\*\*",
+            r"\1",
+            cleaned,
+        )
+
+        cleaned = re.sub(
+            r"(?<!\*)\*(?!\s)(.*?)(?<!\s)\*(?!\*)",
+            r"\1",
+            cleaned,
+        )
+
+        cleaned = re.sub(
+            r"^\s*\*\s+",
+            "- ",
             cleaned,
             flags=re.MULTILINE,
         )
@@ -419,6 +619,8 @@ class OutputFormatter:
             plain,
         )
 
+        plain = self._markdown_tables_to_plain_text(plain)
+
         plain = re.sub(
             r"`(.*?)`",
             r"\1",
@@ -432,6 +634,32 @@ class OutputFormatter:
         )
 
         return plain.strip()
+
+    def _markdown_tables_to_plain_text(
+        self,
+        text: str,
+    ) -> str:
+        lines = text.splitlines()
+        converted = []
+
+        for line in lines:
+            stripped = line.strip()
+
+            if stripped.startswith("|") and stripped.endswith("|"):
+                cells = [
+                    cell.strip()
+                    for cell in stripped.strip("|").split("|")
+                ]
+
+                if cells and all(re.fullmatch(r"[-:\s]+", cell) for cell in cells):
+                    continue
+
+                converted.append(" | ".join(cells))
+                continue
+
+            converted.append(line)
+
+        return "\n".join(converted)
 
     def _detect_format(
         self,
@@ -448,6 +676,19 @@ class OutputFormatter:
             "bullet_summary": "bullet_summary",
             "executive_summary": "executive_summary",
             "meeting_minutes": "meeting_minutes",
+            "action_items": "action_items",
+            "structured_report": "structured_report",
+            "table_format": "table",
+            "email_draft": "email",
+            "mcqs": "mcqs",
+            "flashcards": "flashcards",
+            "qa_generation": "question_answers",
+            "answer_questions": "answers",
+            "beginner_explanation": "beginner_explanation",
+            "main_points": "main_points",
+            "key_points": "key_points",
+            "simplify": "simplified_text",
+            "clean_text": "clean_text",
         }
 
         return formats.get(

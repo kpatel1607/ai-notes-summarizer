@@ -206,16 +206,16 @@ class PromptBuilder:
 
         word_count = len(text.split())
 
-        if word_count > 650:
+        if word_count > 1200:
             return False
 
         if metadata.get("limit_applied") or metadata.get("long_document"):
             return False
 
-        if structure_metadata.get("table_count", 0) > 0:
+        if task == "table_format" and structure_metadata.get("table_count", 0) > 0:
             return False
 
-        if structure_metadata.get("layout_block_count", 0) > 0:
+        if word_count > 850 and structure_metadata.get("layout_block_count", 0) > 0:
             return False
 
         return True
@@ -257,9 +257,45 @@ Task instruction:
 Rules:
 {self._compact_rules_for_mode(mode)}
 
+Output format:
+{self._compact_output_shape(mode, task)}
+
 Content:
 {text[:3500]}
 """
+
+    def _compact_output_shape(
+        self,
+        mode: str,
+        task: str,
+    ) -> str:
+
+        shapes = {
+            "important_notes": "Use short section headings and concise study bullets. Include definitions and key facts only when present.",
+            "qa_generation": "Return 6-10 Q&A pairs. Format each as Q: question then A: answer.",
+            "answer_questions": "Answer each question found in the content. If the answer is missing, write Not clearly available.",
+            "flashcards": "Return flashcards as Term: ... and Answer: ... pairs.",
+            "mcqs": "Return numbered MCQs with four options A-D and a final Answer line for each.",
+            "beginner_explanation": "Use simple sections: Big Idea, Simple Explanation, Key Terms, Quick Recap.",
+            "revision_sheet": "Use sections: Must Know, Definitions, Quick Facts, Last-Minute Revision.",
+            "executive_summary": "Use sections: Context, Key Points, Implications, Risks, Next Steps.",
+            "main_points": "Return a numbered list of distinct points. Do not turn it into a paragraph summary.",
+            "action_items": "Use a table with columns Action, Owner, Deadline, Priority, Notes. Use Not specified for missing cells.",
+            "meeting_minutes": "Use sections: Agenda, Discussion, Decisions, Action Items.",
+            "structured_report": "Use sections: Overview, Findings, Details, Risks or Gaps, Conclusion.",
+            "table_format": "Return only a markdown table. Use clear column headers and no blank rows.",
+            "email_draft": "Return a polished email with Subject, Greeting, Body, Closing, and Signature Placeholder.",
+            "short_summary": "Return 2-4 concise paragraphs.",
+            "bullet_summary": "Return grouped bullet points with no paragraph block.",
+            "key_points": "Return 5-10 numbered key points.",
+            "simplify": "Rewrite in simpler language with short paragraphs and a quick recap.",
+            "clean_text": "Return cleaned text with clear paragraphs and headings where useful.",
+        }
+
+        return shapes.get(
+            task,
+            "Use a clean professional structure that matches the requested task.",
+        )
 
     def _compact_rules_for_mode(
         self,
@@ -272,6 +308,8 @@ Content:
             "- Do not invent facts, examples, names, dates, or numbers.",
             "- If something is not clear from the content, say it is not clearly available.",
             "- Keep formatting readable and avoid repetition.",
+            "- Avoid decorative markdown. Do not use **bold** or unnecessary asterisks.",
+            "- Use plain section headings, numbered lists, bullets, or tables only when useful.",
         ]
 
         if mode == "student":

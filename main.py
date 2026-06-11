@@ -42,16 +42,16 @@ CUSTOM_DOMAIN = os.getenv(
     "CUSTOM_DOMAIN",
     "https://lumina-ai.co.in",
 ).strip().rstrip("/")
-APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.2")
-APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "4"))
+APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.3")
+APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "5"))
 APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/download-apk")
 APK_FILE_PATH = os.getenv("APK_FILE_PATH", "static/Lumina-AI.apk")
 APP_RELEASE_NOTES = [
-    "Generation requests now use the official Lumina domain instead of the Hugging Face origin.",
-    "Added folder selection before generation so new documents can be saved directly into folders.",
-    "Improved folder validation, duplicate prevention, sorting, and favorites filtering.",
-    "Improved AI modes for student, professional, and general summaries.",
-    "Cleaner app guide text and document history experience.",
+    "Improved table output with real structured rows for app, PDF, and text export.",
+    "Reduced prompt complexity for short inputs such as email drafts and four-paragraph notes.",
+    "Cleaned raw markdown artifacts such as unnecessary bold asterisks from generated outputs.",
+    "Improved task-specific formatting so output modes look more distinct and professional.",
+    "Added polished in-app rendering for headings, lists, and markdown tables.",
 ]
 
 LUMINA_GENERATION_PROVIDER = os.getenv(
