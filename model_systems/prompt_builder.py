@@ -52,6 +52,7 @@ class PromptBuilder:
             text=text,
             semantic_chunks=semantic_chunks,
             structure=structure,
+            task=task,
         ):
             return self._compact_prompt(
                 mode=mode,
@@ -192,6 +193,7 @@ class PromptBuilder:
         text: str,
         semantic_chunks: Dict[str, Any],
         structure: Dict[str, Any],
+        task: str,
     ) -> bool:
 
         metadata = semantic_chunks.get(
