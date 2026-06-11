@@ -4,6 +4,7 @@ import re
 import os
 import requests
 from dotenv import load_dotenv
+from requests import Timeout
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -130,6 +131,46 @@ class GenerationService:
             temperature=temperature,
             max_tokens=max_tokens,
         )
+
+    def max_tokens_for_task(
+        self,
+        task: str,
+        input_word_count: int = 0,
+        strategy: str = "single_pass_generation",
+    ) -> int:
+        task_budgets = {
+            "email_draft": 520,
+            "table_format": 800,
+            "action_items": 900,
+            "main_points": 900,
+            "short_summary": 700,
+            "bullet_summary": 900,
+            "key_points": 900,
+            "clean_text": 1000,
+            "simplify": 1100,
+            "executive_summary": 1100,
+            "meeting_minutes": 1200,
+            "structured_report": 1400,
+            "important_notes": 1400,
+            "beginner_explanation": 1200,
+            "revision_sheet": 1400,
+            "qa_generation": 1400,
+            "flashcards": 1200,
+            "mcqs": 1500,
+            "answer_questions": 1200,
+        }
+
+        budget = task_budgets.get(task, 1000)
+
+        if input_word_count < 180:
+            budget = min(budget, 650)
+        elif input_word_count > 1800:
+            budget = min(max(budget, 1400), 1800)
+
+        if strategy == "hierarchical_summary":
+            budget = min(max(budget, 1100), 1600)
+
+        return budget
 
     def _should_use_gemini_directly(
         self,
@@ -339,6 +380,7 @@ class GenerationService:
             if response.status_code == 429:
                 return {
                     "success": False,
+                    "error_type": "quota_exceeded",
                     "error": (
                         "Gemini quota exceeded. Please wait or check "
                         "your API quota."
@@ -351,6 +393,7 @@ class GenerationService:
             if response.status_code >= 400:
                 return {
                     "success": False,
+                    "error_type": "provider_error",
                     "error": (
                         f"Gemini API error {response.status_code}: "
                         f"{response.text[:500]}"
@@ -369,6 +412,7 @@ class GenerationService:
             if not generated_text:
                 return {
                     "success": False,
+                    "error_type": "empty_provider_response",
                     "error": (
                         "Gemini returned no text. Raw response: "
                         f"{str(data)[:500]}"
@@ -386,9 +430,20 @@ class GenerationService:
                 "provider": "gemini",
                 "model": self.gemini_model_name,
             }
+        except Timeout:
+            return {
+                "success": False,
+                "error_type": "timeout",
+                "error": "Gemini request timed out.",
+                "generated_text": "",
+                "provider": "gemini",
+                "model": self.gemini_model_name,
+            }
+
         except Exception as e:
             return {
                 "success": False,
+                "error_type": "unexpected_error",
                 "error": str(e),
                 "generated_text": "",
                 "provider": "gemini",

@@ -208,7 +208,7 @@ class PromptBuilder:
 
         word_count = len(text.split())
 
-        if word_count > 1200:
+        if word_count > 1600:
             return False
 
         if metadata.get("limit_applied") or metadata.get("long_document"):
@@ -217,7 +217,7 @@ class PromptBuilder:
         if task == "table_format" and structure_metadata.get("table_count", 0) > 0:
             return False
 
-        if word_count > 850 and structure_metadata.get("layout_block_count", 0) > 0:
+        if word_count > 1200 and structure_metadata.get("layout_block_count", 0) > 0:
             return False
 
         return True
@@ -263,7 +263,7 @@ Output format:
 {self._compact_output_shape(mode, task)}
 
 Content:
-{text[:3500]}
+{text[:2800]}
 """
 
     def _compact_output_shape(

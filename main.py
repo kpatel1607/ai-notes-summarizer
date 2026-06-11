@@ -346,6 +346,24 @@ def extract_generation_error(result: Dict[str, Any]) -> str:
     return "AI returned empty output"
 
 
+def generation_error_status(result: Dict[str, Any]) -> int:
+    generation_result = result.get("generation_result", {})
+
+    if not isinstance(generation_result, dict):
+        return 500
+
+    error_type = generation_result.get("error_type", "")
+    error = str(generation_result.get("error", "")).lower()
+
+    if error_type == "quota_exceeded" or "quota" in error:
+        return 429
+
+    if error_type in {"timeout", "provider_error", "unexpected_error"}:
+        return 503
+
+    return 500
+
+
 def validate_format(format_value: str) -> str:
     allowed = {
         "bullet",
@@ -1503,7 +1521,7 @@ def generate_v2(
             print("V2 empty output details:", error_detail)
 
             raise HTTPException(
-                status_code=500,
+                status_code=generation_error_status(result),
                 detail=error_detail,
             )
 
@@ -1630,7 +1648,7 @@ async def generate_file_v2(
             error_detail = extract_generation_error(result)
 
             raise HTTPException(
-                status_code=500,
+                status_code=generation_error_status(result),
                 detail=error_detail,
             )
 
@@ -1656,6 +1674,11 @@ async def generate_file_v2(
                 "dailyLimit": DAILY_FREE_LIMIT,
                 "extractionSource": extraction.get("source", ""),
                 "extractionConfidence": extraction.get("confidence", 0),
+                "extractionQuality": extraction.get("quality", {}),
+                "extractionPreview": extraction.get("quality", {}).get(
+                    "preview",
+                    "",
+                ),
                 "tableCount": structure.get("metadata", {}).get(
                     "table_count",
                     0,
@@ -1775,7 +1798,7 @@ def summarize_notes(
             print("Legacy empty output details:", error_detail)
 
             raise HTTPException(
-                status_code=500,
+                status_code=generation_error_status(result),
                 detail=error_detail,
             )
 

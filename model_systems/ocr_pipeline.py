@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 import os
 import platform
+import re
 import traceback
 
 import fitz
@@ -69,10 +70,13 @@ class OCRPipeline:
         self,
         text: str,
     ) -> Dict[str, Any]:
+        cleaned = text.strip()
+
         return {
-            "text": text.strip(),
+            "text": cleaned,
             "source": "plain_text",
             "confidence": 1.0,
+            "quality": self._quality_report(cleaned, 1.0),
             "tables": [],
             "table_count": 0,
         }
@@ -103,10 +107,13 @@ class OCRPipeline:
 
         cleaned = self.clean_text(extracted_text)
 
+        confidence = 0.94 if cleaned else 0.4
+
         return {
             "text": cleaned,
             "source": "pdf_text",
-            "confidence": 0.94 if cleaned else 0.4,
+            "confidence": confidence,
+            "quality": self._quality_report(cleaned, confidence),
             "tables": extracted_tables,
             "table_count": len(extracted_tables),
         }
@@ -151,10 +158,13 @@ class OCRPipeline:
             else 0.0
         )
 
+        final_confidence = confidence if cleaned else 0.25
+
         return {
             "text": cleaned,
             "source": "scanned_pdf_ocr",
-            "confidence": confidence if cleaned else 0.25,
+            "confidence": final_confidence,
+            "quality": self._quality_report(cleaned, final_confidence),
             "tables": [],
             "table_count": 0,
         }
@@ -185,6 +195,7 @@ class OCRPipeline:
                         "text": cleaned,
                         "source": "rapidocr_onnx_preprocessed",
                         "confidence": confidence,
+                        "quality": self._quality_report(cleaned, confidence),
                         "tables": [],
                         "table_count": 0,
                     }
@@ -208,6 +219,7 @@ class OCRPipeline:
                         "text": cleaned,
                         "source": "paddleocr_preprocessed",
                         "confidence": confidence,
+                        "quality": self._quality_report(cleaned, confidence),
                         "tables": [],
                         "table_count": 0,
                     }
@@ -225,10 +237,13 @@ class OCRPipeline:
 
             self._safe_unlink_if_temp(processed_path, path)
 
+            final_confidence = confidence if cleaned else 0.3
+
             return {
                 "text": cleaned,
                 "source": "tesseract_layout_fallback",
-                "confidence": confidence if cleaned else 0.3,
+                "confidence": final_confidence,
+                "quality": self._quality_report(cleaned, final_confidence),
                 "tables": [],
                 "table_count": 0,
             }
@@ -241,6 +256,7 @@ class OCRPipeline:
                 "text": "",
                 "source": "ocr_failed",
                 "confidence": 0.0,
+                "quality": self._quality_report("", 0.0),
                 "error": str(e),
                 "tables": [],
                 "table_count": 0,
@@ -266,6 +282,70 @@ class OCRPipeline:
                 cleaned_lines.append(normalized)
 
         return "\n".join(cleaned_lines).strip()
+
+    def _quality_report(
+        self,
+        text: str,
+        confidence: float,
+    ) -> Dict[str, Any]:
+        words = text.split()
+        word_count = len(words)
+        suspicious_words = [
+            word
+            for word in words
+            if self._looks_like_ocr_noise(word)
+        ]
+
+        noise_ratio = (
+            round(len(suspicious_words) / word_count, 3)
+            if word_count
+            else 1.0
+        )
+
+        if confidence >= 0.85 and noise_ratio <= 0.08 and word_count >= 20:
+            label = "high"
+        elif confidence >= 0.55 and noise_ratio <= 0.18 and word_count >= 8:
+            label = "medium"
+        else:
+            label = "low"
+
+        return {
+            "label": label,
+            "word_count": word_count,
+            "noise_ratio": noise_ratio,
+            "confidence": round(confidence, 3),
+            "preview": " ".join(words[:80]),
+            "handwriting_experimental": confidence < 0.6 and noise_ratio > 0.12,
+        }
+
+    def _looks_like_ocr_noise(
+        self,
+        word: str,
+    ) -> bool:
+        cleaned = word.strip()
+
+        if not cleaned:
+            return True
+
+        if len(cleaned) <= 2:
+            return False
+
+        symbol_count = sum(
+            1
+            for char in cleaned
+            if not char.isalnum()
+        )
+
+        if symbol_count / max(len(cleaned), 1) > 0.45:
+            return True
+
+        if any(char.isdigit() for char in cleaned) and any(
+            char.isalpha()
+            for char in cleaned
+        ):
+            return bool(re.search(r"[A-Za-z]\d|\d[A-Za-z]", cleaned))
+
+        return False
 
     def _extract_page_text_with_layout(
         self,

@@ -315,8 +315,22 @@ class PipelineRouter:
 
         generation_result = self.generation_service.generate(
             prepared["generation_prompt"],
-            max_tokens=2500,
+            max_tokens=self.generation_service.max_tokens_for_task(
+                task=task,
+                input_word_count=len(
+                    pipeline_output.get("final_text", "").split()
+                ),
+                strategy="single_pass_generation",
+            ),
         )
+
+        if not generation_result.get("success"):
+            generation_result["generated_text"] = self._safe_fallback_output(
+                pipeline_output=pipeline_output,
+                mode=mode,
+                task=task,
+                error=generation_result.get("error", ""),
+            )
 
         postprocessed = self.response_postprocessor.process(
             generated_text=generation_result.get(
@@ -437,8 +451,23 @@ class PipelineRouter:
 
         final_generation = self.generation_service.generate(
             merge_prompt,
-            max_tokens=1400,
+            max_tokens=self.generation_service.max_tokens_for_task(
+                task=task,
+                input_word_count=sum(
+                    len(item.get("summary", "").split())
+                    for item in chunk_summaries
+                ),
+                strategy="hierarchical_summary",
+            ),
         )
+
+        if not final_generation.get("success"):
+            final_generation["generated_text"] = self._safe_fallback_output(
+                pipeline_output=pipeline_output,
+                mode=mode,
+                task=task,
+                error=final_generation.get("error", ""),
+            )
 
         postprocessed = self.response_postprocessor.process(
             generated_text=final_generation.get(
@@ -612,6 +641,59 @@ Chunk summaries:
                 "free",
             ),
         }
+
+    def _safe_fallback_output(
+        self,
+        pipeline_output: Dict[str, Any],
+        mode: str,
+        task: str,
+        error: str = "",
+    ) -> str:
+        source_text = pipeline_output.get("final_text", "").strip()
+
+        if not source_text:
+            return (
+                "Generation unavailable\n"
+                "The document text could not be extracted clearly enough to "
+                "generate this output."
+            )
+
+        preview = " ".join(source_text.split()[:220])
+
+        if task == "email_draft":
+            return ""
+
+        if task == "table_format":
+            lines = [
+                line.strip()
+                for line in source_text.splitlines()
+                if line.strip()
+            ][:12]
+
+            rows = [
+                "| Item | Details |",
+                "| --- | --- |",
+            ]
+
+            for index, line in enumerate(lines, start=1):
+                rows.append(f"| {index} | {line.replace('|', '/')} |")
+
+            return "\n".join(rows)
+
+        heading = "Generation temporarily unavailable"
+
+        if mode == "student":
+            heading = "Study Output Temporarily Limited"
+        elif mode == "professional":
+            heading = "Professional Output Temporarily Limited"
+
+        return (
+            f"{heading}\n\n"
+            "The AI provider did not return a complete response, so Lumina "
+            "preserved the most relevant extracted text instead of returning "
+            "an empty document.\n\n"
+            f"{preview}"
+        )
 
     def generate_from_file(
             self,
