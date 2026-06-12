@@ -42,11 +42,14 @@ CUSTOM_DOMAIN = os.getenv(
     "CUSTOM_DOMAIN",
     "https://lumina-ai.co.in",
 ).strip().rstrip("/")
-APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.5")
-APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "7"))
+APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.6")
+APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "8"))
 APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/download-apk")
 APK_FILE_PATH = os.getenv("APK_FILE_PATH", "static/Lumina-AI.apk")
 APP_RELEASE_NOTES = [
+    "Added a cleaner Play Store-ready source picker with full extracted text review before generation.",
+    "Added extraction quality badges for text, PDF, image OCR, and camera scan sources.",
+    "Improved text, dropdown, button, and chip visibility across all appearance styles.",
     "Fixed email draft output so empty model templates are repaired from the original source text.",
     "Verified all Student, Professional, and General output API formats through the backend router.",
     "Changed Android package from com.example.notes_summarizer_app to com.luminaai.notes for Play Store readiness.",
