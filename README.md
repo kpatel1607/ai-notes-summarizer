@@ -126,11 +126,11 @@ The backend returns metadata such as:
 
 ```json
 {
-  "latestVersionName": "2.0.8",
-  "latestVersionCode": 10,
+  "latestVersionName": "2.0.9",
+  "latestVersionCode": 11,
   "minimumSupportedVersionCode": 1,
   "forceUpdate": false,
-  "downloadUrl": "https://lumina-ai.co.in/download-apk?v=10",
+  "downloadUrl": "https://lumina-ai.co.in/download-apk?v=11",
   "updatePageUrl": "https://lumina-ai.co.in/update",
   "releaseNotes": []
 }
@@ -143,15 +143,15 @@ Important Android limitation: sideloaded APKs cannot silently update themselves.
 Current app version:
 
 ```text
-versionName: 2.0.8
-versionCode: 10
+versionName: 2.0.9
+versionCode: 11
 ```
 
 To prevent repeated update prompts, the backend and deployed secrets must agree with the APK version. Use:
 
 ```text
-PUBLIC_APP_VERSION_NAME=2.0.8
-PUBLIC_APP_VERSION_CODE=10
+PUBLIC_APP_VERSION_NAME=2.0.9
+PUBLIC_APP_VERSION_CODE=11
 ```
 
 Do not keep older `APP_VERSION_NAME` or `APP_VERSION_CODE` environment variables in Hugging Face secrets, because they can cause stale version metadata.
@@ -236,8 +236,8 @@ PUBLIC_BASE_URL=https://lumina-ai.co.in
 CUSTOM_DOMAIN=https://lumina-ai.co.in
 ALLOWED_ORIGINS=https://lumina-ai.co.in,https://www.lumina-ai.co.in
 ALLOWED_HOSTS=lumina-ai.co.in,www.lumina-ai.co.in,*.hf.space,localhost,127.0.0.1
-PUBLIC_APP_VERSION_NAME=2.0.8
-PUBLIC_APP_VERSION_CODE=10
+PUBLIC_APP_VERSION_NAME=2.0.9
+PUBLIC_APP_VERSION_CODE=11
 ```
 
 Optional deployment variables:
@@ -724,8 +724,8 @@ Highest-priority deployment improvements:
 ## Current Version Snapshot
 
 ```text
-Backend app version: 2.0.8
-Android app version: 2.0.8+10
+Backend app version: 2.0.9
+Android app version: 2.0.9+11
 Public domain: https://lumina-ai.co.in
 Backend origin: https://kpatel1607-lumina.hf.space
 Generation provider: Gemini
