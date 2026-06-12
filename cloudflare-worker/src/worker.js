@@ -154,7 +154,7 @@ function withCors(response, request, env) {
   );
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization,Content-Type,Origin,Accept,X-Requested-With",
+    "Authorization,Content-Type,Origin,Accept,X-Requested-With,X-Lumina-Client",
   );
   headers.set("Access-Control-Max-Age", "86400");
 

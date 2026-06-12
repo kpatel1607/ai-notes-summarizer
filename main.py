@@ -1489,6 +1489,16 @@ def generate_v2(
     generate_request: GenerateRequest,
     authorization: str = Header(None),
 ):
+    print(
+        "V2 generation request received:",
+        {
+            "client": request.headers.get("x-lumina-client", ""),
+            "mode": generate_request.mode,
+            "task": generate_request.task,
+            "input_chars": len(generate_request.text or ""),
+        },
+    )
+
     decoded_user = verify_firebase_user(
         authorization,
     )
@@ -1500,6 +1510,8 @@ def generate_v2(
             status_code=401,
             detail="Invalid Firebase user",
         )
+
+    print("V2 generation auth passed:", {"uid": user_uid})
 
     cleaned_text = clean_input_text(
         generate_request.text,
@@ -1527,6 +1539,16 @@ def generate_v2(
     )
 
     try:
+        print(
+            "V2 generation pipeline started:",
+            {
+                "uid": user_uid,
+                "mode": selected_mode,
+                "task": selected_task,
+                "input_chars": len(cleaned_text),
+            },
+        )
+
         result = lumina_router.generate_from_text(
             text=cleaned_text,
             mode=selected_mode,
@@ -1554,6 +1576,16 @@ def generate_v2(
 
         usage_count = check_and_increment_daily_usage(
             user_uid,
+        )
+
+        print(
+            "V2 generation completed:",
+            {
+                "uid": user_uid,
+                "mode": selected_mode,
+                "task": selected_task,
+                "output_chars": len(generated_text),
+            },
         )
 
         return JSONResponse(
