@@ -42,11 +42,14 @@ CUSTOM_DOMAIN = os.getenv(
     "CUSTOM_DOMAIN",
     "https://lumina-ai.co.in",
 ).strip().rstrip("/")
-APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.7")
-APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "9"))
+APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.8")
+APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "10"))
 APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/download-apk")
 APK_FILE_PATH = os.getenv("APK_FILE_PATH", "static/Lumina-AI.apk")
 APP_RELEASE_NOTES = [
+    "Fixed a pre-request generation hang so Generate Document reaches the backend reliably after extraction.",
+    "Added safer generation cleanup so loading state, stop state, and screen-awake state reset after success, failure, or cancellation.",
+    "Removed temporary frontend debug output from Firebase token retrieval.",
     "Added a stop button so users can cancel an in-progress generation from the workspace.",
     "Kept generation alive while users move between app sections, with screen-awake support during active generation.",
     "Added backend request diagnostics so generation starts, auth, routing, and completion are visible in server logs.",
