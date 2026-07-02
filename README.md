@@ -729,7 +729,7 @@ Android app version: 2.0.5+7
 Public domain: https://lumina-ai.co.in
 Backend origin: https://kpatel1607-lumina.hf.space
 Generation provider: Gemini
-Default model: gemini-2.0-flash
+Default model: gemini-2.5-flash
 Deploy target: Hugging Face Docker Space
 Edge proxy: Cloudflare Worker
 ```
