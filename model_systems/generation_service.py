@@ -1,6 +1,5 @@
-from typing import Dict, Any
+from typing import Any, Dict
 from pathlib import Path
-import re
 import os
 import requests
 from dotenv import load_dotenv
@@ -15,17 +14,20 @@ load_dotenv(
 
 
 class GenerationService:
+    """
+    Temporary Gemini-only generation service.
 
-    def __init__(self):
+    Ollama routing and fallback are intentionally disabled for now so every
+    generation request goes directly to Gemini.
+    """
 
-        self.provider = os.getenv(
-            "LUMINA_GENERATION_PROVIDER",
-            "gemini",
-        ).lower().strip()
+    def __init__(self) -> None:
+        # Force Gemini temporarily, regardless of any old environment value.
+        self.provider = "gemini"
 
         self.gemini_model_name = os.getenv(
             "LUMINA_MODEL_NAME",
-            "gemini-2.0-flash",
+            "gemini-2.5-flash",
         ).strip()
 
         default_gemini_api_url = (
@@ -43,88 +45,24 @@ class GenerationService:
             "",
         ).strip()
 
-        self.ollama_url = os.getenv(
-            "LUMINA_OLLAMA_URL",
-            "http://localhost:11434/api/generate",
-        )
-
-        self.ollama_model = os.getenv(
-            "LUMINA_OLLAMA_MODEL",
-            "qwen2.5:1.5b",
-        )
-
     def generate(
         self,
         prompt: str,
         temperature: float = 0.3,
         max_tokens: int = 1200,
     ) -> Dict[str, Any]:
+        """
+        Send every request directly to Gemini.
 
-        if self.provider == "ollama":
+        Ollama is temporarily disabled and is not consulted even if
+        LUMINA_GENERATION_PROVIDER=ollama exists in the environment.
+        """
 
-            if self._should_use_gemini_directly(
-                prompt,
-            ):
-                print(
-                    "\n[Direct Gemini Routing]"
-                    "\nLarge or complex prompt detected."
-                    "\nSkipping Ollama.\n"
-                )
-
-                gemini_result = self._generate_with_gemini(
-                    prompt=prompt,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-
-                gemini_result["direct_routing_used"] = True
-                gemini_result["routing_reason"] = (
-                    "large_or_complex_prompt"
-                )
-
-                return gemini_result
-
-            ollama_result = self._generate_with_ollama(
-                prompt=prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-
-            ollama_failed = (
-                not ollama_result.get("success")
-                or not ollama_result.get(
-                    "generated_text",
-                    "",
-                ).strip()
-            )
-
-            ollama_low_quality = self._is_low_quality_output(
-                generated_text=ollama_result.get(
-                    "generated_text",
-                    "",
-                ),
-                prompt=prompt,
-            )
-
-            if not ollama_failed and not ollama_low_quality:
-                return ollama_result
-
-            print(
-                "\n[Fallback Activated]"
-                "\nOllama generation failed or produced low-quality output."
-                "\nSwitching to Gemini...\n"
-            )
-
-            gemini_result = self._generate_with_gemini(
-                prompt=prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-
-            gemini_result["fallback_used"] = True
-            gemini_result["fallback_from"] = self.ollama_model
-
-            return gemini_result
+        print(
+            "\n[Generation Provider]"
+            "\nGemini-only mode enabled."
+            "\nOllama is temporarily disabled.\n"
+        )
 
         return self._generate_with_gemini(
             prompt=prompt,
@@ -133,197 +71,122 @@ class GenerationService:
         )
 
     def max_tokens_for_task(
-        self,
-        task: str,
-        input_word_count: int = 0,
-        strategy: str = "single_pass_generation",
+            self,
+            task: str,
+            input_word_count: int = 0,
+            strategy: str = "single_pass_generation",
     ) -> int:
+        task = (task or "").strip().lower()
+        strategy = (
+                strategy or "single_pass_generation"
+        ).strip().lower()
+
+        # Base output budget according to the expected output shape.
         task_budgets = {
-            "email_draft": 520,
-            "table_format": 800,
-            "action_items": 900,
-            "main_points": 900,
-            "short_summary": 700,
-            "bullet_summary": 900,
-            "key_points": 900,
-            "clean_text": 1000,
-            "simplify": 1100,
-            "executive_summary": 1100,
-            "meeting_minutes": 1200,
-            "structured_report": 1400,
-            "important_notes": 1400,
-            "beginner_explanation": 1200,
-            "revision_sheet": 1400,
-            "qa_generation": 1400,
-            "flashcards": 1200,
-            "mcqs": 1500,
-            "answer_questions": 1200,
+            # General tasks
+            "short_summary": 1600,
+            "bullet_summary": 2000,
+            "key_points": 1800,
+            "simplify": 2400,
+            "clean_text": 4200,
+
+            # Student tasks
+            "important_notes": 4200,
+            "qa_generation": 4200,
+            "answer_questions": 5000,
+            "flashcards": 3600,
+            "mcqs": 4600,
+            "beginner_explanation": 3600,
+            "revision_sheet": 4200,
+
+            # Professional tasks
+            "executive_summary": 2600,
+            "main_points": 2400,
+            "action_items": 2600,
+            "meeting_minutes": 3600,
+            "structured_report": 4200,
+            "table_format": 3400,
+            "email_draft": 1800,
         }
 
-        budget = task_budgets.get(task, 1000)
+        budget = task_budgets.get(
+            task,
+            2200,
+        )
 
-        if input_word_count < 180:
-            budget = min(budget, 650)
-        elif input_word_count > 1800:
-            budget = min(max(budget, 1400), 1800)
+        # Tasks whose output can naturally be longer than the source.
+        expansion_factors = {
+            "answer_questions": 6.0,
+            "qa_generation": 4.0,
+            "mcqs": 5.0,
+            "flashcards": 3.5,
+            "important_notes": 3.0,
+            "revision_sheet": 3.0,
+            "beginner_explanation": 3.0,
+            "structured_report": 2.5,
+            "meeting_minutes": 2.2,
+            "table_format": 2.0,
+            "action_items": 1.8,
+            "main_points": 1.5,
+            "executive_summary": 1.4,
+            "bullet_summary": 1.5,
+            "key_points": 1.5,
+            "simplify": 1.5,
+            "clean_text": 1.8,
+            "short_summary": 0.9,
+            "email_draft": 1.2,
+        }
 
+        expansion_factor = expansion_factors.get(
+            task,
+            1.5,
+        )
+
+        # Approximate English conversion:
+        # one word is commonly around 1.3–1.7 tokens.
+        estimated_task_tokens = int(
+            max(input_word_count, 1)
+            * expansion_factor
+            * 1.6
+        )
+
+        budget = max(
+            budget,
+            estimated_task_tokens,
+        )
+
+        # Larger source documents need extra room even for concise tasks.
+        if input_word_count > 500:
+            budget = max(
+                budget,
+                2800,
+            )
+
+        if input_word_count > 1200:
+            budget = max(
+                budget,
+                4200,
+            )
+
+        if input_word_count > 2500:
+            budget = max(
+                budget,
+                6000,
+            )
+
+        # Final synthesis from multiple chunk outputs needs more room.
         if strategy == "hierarchical_summary":
-            budget = min(max(budget, 1100), 1600)
-
-        return budget
-
-    def _should_use_gemini_directly(
-        self,
-        prompt: str,
-    ) -> bool:
-
-        prompt_words = len(
-            prompt.split()
-        )
-
-        # Qwen 1.5B is weak for large structured prompts.
-        if prompt_words > 2200:
-            return True
-
-        lower_prompt = prompt.lower()
-
-        complex_keywords = [
-            "long document detected: true",
-            "recommended strategy: hierarchical_summary",
-            "free-tier limit applied: true",
-            "only limited chunks were included",
-            "limit applied: true",
-        ]
-
-        if any(
-            keyword in lower_prompt
-            for keyword in complex_keywords
-        ):
-            return True
-
-        chunk_count = len(
-            re.findall(
-                r"\bchunk\s+\d+\b",
-                lower_prompt,
-            )
-        )
-
-        if chunk_count >= 10:
-            return True
-
-        return False
-
-    def _is_low_quality_output(
-        self,
-        generated_text: str,
-        prompt: str,
-    ) -> bool:
-
-        text = generated_text.strip()
-
-        if not text:
-            return True
-
-        word_count = len(text.split())
-        prompt_word_count = len(prompt.split())
-
-        if prompt_word_count > 1200 and word_count < 250:
-            return True
-
-        unfinished_endings = [
-            " or",
-            " and",
-            " with",
-            " from",
-            " to",
-            " for",
-            " of",
-            " in",
-            " the",
-            " a",
-            " an",
-            "-",
-            ":",
-            ",",
-        ]
-
-        lower_text = text.lower()
-
-        if any(
-            lower_text.endswith(ending)
-            for ending in unfinished_endings
-        ):
-            return True
-
-        heading_count = (
-            text.count("##")
-            + text.count("# ")
-        )
-
-        if prompt_word_count > 1000 and heading_count < 4:
-            return True
-
-        if re.search(
-            r"\n-\s*$",
-            text,
-        ):
-            return True
-
-        if re.search(
-            r"\n-\s*[-–—]+\s*$",
-            text,
-        ):
-            return True
-
-        return False
-
-    def _generate_with_ollama(
-        self,
-        prompt: str,
-        temperature: float,
-        max_tokens: int,
-    ) -> Dict[str, Any]:
-
-        try:
-            payload = {
-                "model": self.ollama_model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
-            }
-
-            response = requests.post(
-                self.ollama_url,
-                json=payload,
-                timeout=300,
+            budget = max(
+                budget,
+                5000,
             )
 
-            response.raise_for_status()
-
-            data = response.json()
-
-            return {
-                "success": True,
-                "generated_text": data.get(
-                    "response",
-                    "",
-                ).strip(),
-                "raw_response": data,
-                "provider": "ollama",
-                "model": self.ollama_model,
-            }
-
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "generated_text": "",
-                "provider": "ollama",
-                "model": self.ollama_model,
-            }
+        # Keep a safe application-level ceiling.
+        # This is below Gemini's model maximum but large enough for your tasks.
+        return min(
+            budget,
+            8000,
+        )
 
     def _generate_with_gemini(
         self,
@@ -331,10 +194,10 @@ class GenerationService:
         temperature: float,
         max_tokens: int,
     ) -> Dict[str, Any]:
-
         if not self.gemini_api_url:
             return {
                 "success": False,
+                "error_type": "configuration_error",
                 "error": "Gemini API URL not configured.",
                 "generated_text": "",
                 "provider": "gemini",
@@ -344,6 +207,7 @@ class GenerationService:
         if not self.gemini_api_key:
             return {
                 "success": False,
+                "error_type": "configuration_error",
                 "error": "Gemini API key not configured.",
                 "generated_text": "",
                 "provider": "gemini",
@@ -365,6 +229,9 @@ class GenerationService:
                 "generationConfig": {
                     "temperature": temperature,
                     "maxOutputTokens": max_tokens,
+                    "thinkingConfig": {
+                        "thinkingBudget": 0,
+                    },
                 },
             }
 
@@ -405,6 +272,47 @@ class GenerationService:
 
             data = response.json()
 
+            candidates = data.get(
+                "candidates",
+                [],
+            )
+
+            candidate = (
+                candidates[0]
+                if candidates
+                else {}
+            )
+
+            finish_reason = candidate.get(
+                "finishReason",
+                "",
+            )
+
+            usage_metadata = data.get(
+                "usageMetadata",
+                {},
+            )
+
+            generated_text = self._extract_gemini_text(
+                data,
+            )
+
+            if finish_reason == "MAX_TOKENS":
+                return {
+                    "success": False,
+                    "error_type": "max_tokens_reached",
+                    "error": (
+                        "Gemini reached the output-token limit "
+                        "before completing the response."
+                    ),
+                    "generated_text": generated_text,
+                    "raw_response": data,
+                    "provider": "gemini",
+                    "model": self.gemini_model_name,
+                    "finish_reason": finish_reason,
+                    "usage_metadata": usage_metadata,
+                }
+
             generated_text = self._extract_gemini_text(
                 data,
             )
@@ -430,6 +338,7 @@ class GenerationService:
                 "provider": "gemini",
                 "model": self.gemini_model_name,
             }
+
         except Timeout:
             return {
                 "success": False,
@@ -440,11 +349,21 @@ class GenerationService:
                 "model": self.gemini_model_name,
             }
 
-        except Exception as e:
+        except requests.RequestException as exc:
+            return {
+                "success": False,
+                "error_type": "network_error",
+                "error": str(exc),
+                "generated_text": "",
+                "provider": "gemini",
+                "model": self.gemini_model_name,
+            }
+
+        except Exception as exc:
             return {
                 "success": False,
                 "error_type": "unexpected_error",
-                "error": str(e),
+                "error": str(exc),
                 "generated_text": "",
                 "provider": "gemini",
                 "model": self.gemini_model_name,
@@ -453,8 +372,11 @@ class GenerationService:
     def _build_gemini_url(
         self,
     ) -> str:
-
-        separator = "&" if "?" in self.gemini_api_url else "?"
+        separator = (
+            "&"
+            if "?" in self.gemini_api_url
+            else "?"
+        )
 
         return (
             f"{self.gemini_api_url}"
@@ -465,13 +387,49 @@ class GenerationService:
         self,
         response_json: Dict[str, Any],
     ) -> str:
-
         try:
-            return (
-                response_json["candidates"][0]
-                ["content"]["parts"][0]["text"]
-                .strip()
+            candidates = response_json.get(
+                "candidates",
+                [],
             )
+
+            if not candidates:
+                return ""
+
+            content = candidates[0].get(
+                "content",
+                {},
+            )
+
+            parts = content.get(
+                "parts",
+                [],
+            )
+
+            texts = [
+                str(part.get("text", "") or "").strip()
+                for part in parts
+                if isinstance(part, dict)
+                and part.get("text")
+            ]
+
+            return "\n".join(
+                text
+                for text in texts
+                if text
+            ).strip()
 
         except Exception:
             return ""
+
+
+if __name__ == "__main__":
+    service = GenerationService()
+
+    result = service.generate(
+        prompt="Return exactly: Gemini connection successful.",
+        temperature=0.0,
+        max_tokens=50,
+    )
+
+    print(result)

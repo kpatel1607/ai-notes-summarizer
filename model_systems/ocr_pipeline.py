@@ -3,11 +3,12 @@ from typing import Any, Dict, List, Tuple
 import os
 import platform
 import re
-import traceback
 
 import fitz
 from PIL import Image, ImageFilter, ImageOps
 import pytesseract
+
+from model_systems.extraction_router import ExtractionRouter
 
 try:
     from paddleocr import PaddleOCR
@@ -34,15 +35,15 @@ class OCRPipeline:
             "LUMINA_ENABLE_PADDLEOCR",
             "false",
         ).lower().strip() == "true"
+        self.extraction_router = ExtractionRouter()
 
     def _get_rapid_ocr(self):
         if RapidOCR is not None:
             try:
                 if self.rapid_ocr is None:
                     self.rapid_ocr = RapidOCR()
-            except Exception:
-                print("RapidOCR initialization failed:")
-                traceback.print_exc()
+            except Exception as exc:
+                print("RapidOCR initialization failed:", exc.__class__.__name__)
                 self.rapid_ocr = None
 
         return self.rapid_ocr
@@ -59,9 +60,8 @@ class OCRPipeline:
                         lang="en",
                         show_log=False,
                     )
-            except Exception:
-                print("PaddleOCR initialization failed:")
-                traceback.print_exc()
+            except Exception as exc:
+                print("PaddleOCR initialization failed:", exc.__class__.__name__)
                 self.paddle_ocr = None
 
         return self.paddle_ocr
@@ -71,103 +71,59 @@ class OCRPipeline:
         text: str,
     ) -> Dict[str, Any]:
         cleaned = text.strip()
+        extracted = self.extraction_router.extract_text(cleaned)
 
         return {
-            "text": cleaned,
+            **self._normalize_extraction_result(extracted),
             "source": "plain_text",
-            "confidence": 1.0,
-            "quality": self._quality_report(cleaned, 1.0),
-            "tables": [],
-            "table_count": 0,
         }
 
     def extract_from_pdf(
         self,
         file_path: str,
+        route_config: Dict[str, Any] = None,
+        features: Dict[str, Any] = None,
+        mode: str = "general",
+        task: str = "short_summary",
+        user_plan: str = "free",
     ) -> Dict[str, Any]:
         path = Path(file_path)
 
         if not path.exists():
             raise FileNotFoundError(file_path)
 
-        document = fitz.open(file_path)
-
-        extracted_text = ""
-        extracted_tables = []
-
-        for page in document:
-            page_text = self._extract_page_text_with_layout(page)
-
-            if page_text:
-                extracted_text += page_text + "\n\n"
-
-            extracted_tables.extend(self._extract_pdf_tables(page))
-
-        document.close()
-
-        cleaned = self.clean_text(extracted_text)
-
-        confidence = 0.94 if cleaned else 0.4
-
-        return {
-            "text": cleaned,
-            "source": "pdf_text",
-            "confidence": confidence,
-            "quality": self._quality_report(cleaned, confidence),
-            "tables": extracted_tables,
-            "table_count": len(extracted_tables),
-        }
+        extracted = self.extraction_router.extract_pdf(
+            file_path,
+            route_config=route_config or {},
+            features=features or {},
+            mode=mode,
+            task=task,
+            user_plan=user_plan,
+        )
+        normalized = self._normalize_extraction_result(extracted)
+        normalized["source"] = extracted.get("source", "pdf_text")
+        return normalized
 
     def extract_from_scanned_pdf(
         self,
         file_path: str,
+        user_plan: str = "free",
     ) -> Dict[str, Any]:
         path = Path(file_path)
 
         if not path.exists():
             raise FileNotFoundError(file_path)
 
-        document = fitz.open(file_path)
-
-        all_text = ""
-        page_confidences = []
-
-        for page_index, page in enumerate(document):
-            pix = page.get_pixmap(dpi=300)
-            temp_image_path = path.parent / f"_temp_pdf_page_{page_index}.png"
-
-            pix.save(str(temp_image_path))
-
-            page_result = self.extract_from_image(str(temp_image_path))
-            page_confidences.append(page_result.get("confidence", 0.0))
-
-            if page_result.get("text"):
-                all_text += (
-                    f"\n\n--- Page {page_index + 1} ---\n"
-                    + page_result["text"]
-                )
-
-            self._safe_unlink(temp_image_path)
-
-        document.close()
-
-        cleaned = self.clean_text(all_text)
-        confidence = (
-            round(sum(page_confidences) / len(page_confidences), 3)
-            if page_confidences
-            else 0.0
+        extracted = self.extraction_router.scanned_pdf_extractor.extract(
+            file_path,
+            user_plan=user_plan,
         )
-
-        final_confidence = confidence if cleaned else 0.25
-
-        return {
-            "text": cleaned,
-            "source": "scanned_pdf_ocr",
-            "confidence": final_confidence,
-            "quality": self._quality_report(cleaned, final_confidence),
-            "tables": [],
-            "table_count": 0,
-        }
+        normalized = self._normalize_extraction_result(extracted)
+        normalized["source"] = "scanned_pdf_ocr"
+        normalized["page_results"] = extracted.get("page_results", [])
+        normalized["pages_processed"] = extracted.get("pages_processed", 0)
+        normalized["limit_applied"] = extracted.get("limit_applied", False)
+        return normalized
 
     def extract_from_image(
         self,
@@ -178,89 +134,12 @@ class OCRPipeline:
         if not path.exists():
             raise FileNotFoundError(file_path)
 
-        processed_path = self._preprocess_image(path)
-
-        rapid_ocr = self._get_rapid_ocr()
-
-        if rapid_ocr is not None:
-            try:
-                result, _ = rapid_ocr(str(processed_path))
-                extracted_lines = self._lines_from_rapidocr_result(result)
-                confidence = self._confidence_from_rapidocr_result(result)
-                cleaned = self.clean_text("\n".join(extracted_lines))
-
-                if cleaned and confidence >= 0.50:
-                    self._safe_unlink_if_temp(processed_path, path)
-                    return {
-                        "text": cleaned,
-                        "source": "rapidocr_onnx_preprocessed",
-                        "confidence": confidence,
-                        "quality": self._quality_report(cleaned, confidence),
-                        "tables": [],
-                        "table_count": 0,
-                    }
-
-            except Exception:
-                print("\nRAPID OCR ERROR:")
-                traceback.print_exc()
-
-        paddle_ocr = self._get_paddle_ocr()
-
-        if paddle_ocr is not None:
-            try:
-                result = paddle_ocr.ocr(str(processed_path))
-                extracted_lines = self._lines_from_paddle_result(result)
-                confidence = self._confidence_from_paddle_result(result)
-                cleaned = self.clean_text("\n".join(extracted_lines))
-
-                if cleaned and confidence >= 0.55:
-                    self._safe_unlink_if_temp(processed_path, path)
-                    return {
-                        "text": cleaned,
-                        "source": "paddleocr_preprocessed",
-                        "confidence": confidence,
-                        "quality": self._quality_report(cleaned, confidence),
-                        "tables": [],
-                        "table_count": 0,
-                    }
-
-            except Exception:
-                print("\nPADDLE OCR ERROR:")
-                traceback.print_exc()
-
-        try:
-            image = Image.open(processed_path)
-            fallback_text, confidence = self._extract_with_tesseract_data(
-                image,
-            )
-            cleaned = self.clean_text(fallback_text)
-
-            self._safe_unlink_if_temp(processed_path, path)
-
-            final_confidence = confidence if cleaned else 0.3
-
-            return {
-                "text": cleaned,
-                "source": "tesseract_layout_fallback",
-                "confidence": final_confidence,
-                "quality": self._quality_report(cleaned, final_confidence),
-                "tables": [],
-                "table_count": 0,
-            }
-
-        except Exception as e:
-            self._safe_unlink_if_temp(processed_path, path)
-            print(f"Tesseract failed: {e}")
-
-            return {
-                "text": "",
-                "source": "ocr_failed",
-                "confidence": 0.0,
-                "quality": self._quality_report("", 0.0),
-                "error": str(e),
-                "tables": [],
-                "table_count": 0,
-            }
+        extracted = self.extraction_router.image_ocr_extractor.extract(
+            file_path,
+        )
+        normalized = self._normalize_extraction_result(extracted)
+        normalized["detected_blocks"] = extracted.get("detected_blocks", [])
+        return normalized
 
     def clean_text(
         self,
@@ -282,6 +161,38 @@ class OCRPipeline:
                 cleaned_lines.append(normalized)
 
         return "\n".join(cleaned_lines).strip()
+
+    def _normalize_extraction_result(
+        self,
+        extracted: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        text = self.clean_text(
+            extracted.get("text")
+            or extracted.get("extracted_text")
+            or extracted.get("markdown")
+            or ""
+        )
+        confidence = float(
+            extracted.get("confidence")
+            or extracted.get("ocr_confidence")
+            or extracted.get("avg_ocr_confidence")
+            or (1.0 if text else 0.0)
+        )
+
+        return {
+            **extracted,
+            "text": text,
+            "source": extracted.get("source")
+            or extracted.get("extraction_method")
+            or "unknown",
+            "confidence": round(confidence, 3),
+            "quality": self._quality_report(text, confidence),
+            "tables": extracted.get("tables", []),
+            "table_count": extracted.get(
+                "table_count",
+                len(extracted.get("tables", [])),
+            ),
+        }
 
     def _quality_report(
         self,

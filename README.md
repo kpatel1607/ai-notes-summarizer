@@ -7,729 +7,679 @@ sdk: docker
 app_port: 7860
 ---
 
-# Lumina AI Notes Summarizer
+# Lumina AI - Structure-Aware Document Intelligence System
 
-Lumina AI is an AI notes and document summarizer made of a FastAPI backend, a Flutter Android app, Firebase services, a public policy/download website, and a Cloudflare Worker reverse proxy. The app lets users paste notes, extract text from PDFs/images/camera scans, choose an output mode, generate structured AI documents, save results to cloud history, organize them into folders, and download future app updates from the official domain.
+## Abstract
 
-The production public domain is:
+Lumina AI is a FastAPI-based document intelligence system designed to convert digital PDFs, scanned PDFs, images, camera scans, and pasted text into task-specific AI outputs. The system combines extraction, OCR cleanup, smart normalization, semantic preservation, document structure parsing, semantic chunking, prompt construction, Gemini generation, response postprocessing, and structured output formatting for a Flutter frontend.
 
-```text
-https://lumina-ai.co.in
+The project is built as an AI engineering pipeline rather than a single summarization prompt. Its central idea is that reliable document generation depends on preserving source structure before asking a language model to summarize, answer, format, or transform the content. Lumina therefore separates extraction quality, text cleanup, structural reconstruction, routing, generation, and final response formatting into explicit modules.
+
+## Problem Statement
+
+Most OCR and extraction tools flatten documents into plain text. Headings, bullet boundaries, tables, question numbers, labels, contact fields, and visual grouping can be lost during extraction. When this flattened text is sent directly to a generic summarizer, important information may be merged, omitted, duplicated, or reformatted incorrectly.
+
+The input problem is also heterogeneous. A user may upload a digital PDF with selectable text, a scanned PDF that requires OCR, an image of handwritten or printed notes, or pasted text from another source. These inputs require different extraction strategies and different confidence assumptions.
+
+The output problem is equally important. Users do not always need a generic summary. Students may need flashcards, exam notes, question answers, or revision sheets. Professionals may need meeting minutes, action items, structured reports, emails, or tables. General users may need simplification, key points, text cleanup, or concise summaries. Lumina AI treats the selected task as part of the routing and prompt-building problem.
+
+## Motivation
+
+Students often work with photographed notes, PDFs, textbook pages, question papers, and mixed-quality OCR. They need outputs that preserve concepts, questions, definitions, examples, and exam instructions rather than compressed generic summaries.
+
+Professionals often work with meeting notes, reports, resumes, policy documents, tables, action lists, and email drafts. These workflows require traceability, structure, and task-specific formatting. Losing a date, owner, deadline, row, or label can make the generated output unreliable.
+
+Document-heavy workflows benefit from AI only when extraction and generation are treated as a pipeline. Lumina AI exists to explore that pipeline: how to turn messy source material into structured, task-aware, frontend-ready outputs while preserving meaningful source information.
+
+## Key Features
+
+- PDF, image, camera scan, and pasted text input support.
+- OCR extraction for scanned PDFs and images.
+- Digital PDF versus scanned PDF routing.
+- Conservative OCR cleanup before higher-level transformations.
+- Smart text normalization for headings, bullets, labels, questions, and dense OCR text.
+- Semantic preservation filtering to reduce noise without removing important content.
+- Document structure parsing for titles, headings, paragraphs, lists, questions, key-value fields, and table-like text.
+- Semantic chunking for long or structured documents.
+- Student, professional, and general generation modes.
+- Task-based Gemini generation.
+- Response postprocessing to remove generic model wrappers and repair markdown.
+- Structured output formatting for markdown, plain text, sections, and tables.
+- Markdown and plain text output for Flutter rendering, sharing, and export.
+- Structured table extraction for frontend rendering.
+- Cache-ready architecture with request hashing, Redis exact cache hooks, and semantic cache hooks.
+- FastAPI backend with Firebase authentication, usage limits, job status support, and deployment routes.
+
+## System Architecture
+
+```mermaid
+flowchart TD
+    A[User Uploads PDF / Image / Text] --> B[Input Analyzer]
+    B --> C[Extraction Router]
+    C --> D[Digital PDF Extractor]
+    C --> E[Scanned PDF OCR Extractor]
+    C --> F[Image OCR Extractor]
+    D --> G[Text Cleanup Pipeline]
+    E --> G
+    F --> G
+    G --> H[Smart Text Normalizer]
+    H --> I[Semantic Preservation Filter]
+    I --> J[Document Structure Parser]
+    J --> K[Semantic Chunker]
+    K --> L[Mode Router]
+    L --> M[Prompt Builder]
+    M --> N[Generation Service]
+    N --> O[Gemini Provider]
+    O --> P[Response Postprocessor]
+    P --> Q[Output Formatter]
+    Q --> R[Flutter/API Response]
 ```
 
-The current Hugging Face Space origin is:
+## Module Architecture
 
-```text
-https://kpatel1607-lumina.hf.space
+The current implementation is in `model_systems/`. The production module grouping is shown below. If compatibility wrappers are used during refactoring, they should preserve old imports while forwarding to these grouped responsibilities.
+
+```mermaid
+flowchart LR
+    core[core/] --> input[input/]
+    input --> extraction[extraction/]
+    extraction --> preprocessing[preprocessing/]
+    preprocessing --> structure[structure/]
+    structure --> retrieval[retrieval/]
+    retrieval --> generation[generation/]
+    generation --> providers[providers/]
 ```
 
-Cloudflare is used as the public reverse proxy so users and Play Store policy links can use the Lumina domain while the backend continues running on Hugging Face Spaces.
+## Methodology / Pipeline Design
 
-## Repository Layout
+### Input Analysis
 
-This workspace currently has three important project folders:
+The pipeline begins by identifying whether the source is pasted text, a digital PDF, a scanned PDF, or an image. This stage estimates document length, file type, OCR requirements, table-like content, page count, and other routing signals.
 
-```text
-ai_notes_summariser/
-  ai_backend/              FastAPI backend, model pipeline, website, APK, Cloudflare Worker
-  notes_summarizer_app/    Flutter app source for Android and other Flutter targets
-  hf_lumina_deploy/        Hugging Face deployment copy/snapshot
-```
+### Extraction Routing
 
-`ai_backend` is the active Git repository that is pushed to GitHub and deployed to Hugging Face. The Flutter app is a sibling folder, not part of the backend Git repository, so app source changes are local unless they are copied, committed, or moved into the repo later.
+The extraction router chooses the appropriate extraction strategy. Digital PDFs are handled differently from scanned PDFs. Images are sent to OCR. Text input is passed through with metadata so downstream stages can behave consistently.
 
-## High-Level Architecture
+### OCR and PDF Extraction
 
-```text
-Flutter Android App
-  - Firebase Authentication
-  - On-device PDF/image/camera extraction
-  - Sends text to backend generation API
-  - Saves generated summaries/folders/history to Firestore
-  - Checks /app-version for update prompts
+Digital PDF extraction uses PDF text and table extraction where available. Scanned PDFs are rendered page by page and processed through OCR. Image extraction uses OCR engines and preprocessing to improve readability. The system keeps extraction metadata so later stages can reason about confidence and structure.
 
-Cloudflare Worker
-  - Public endpoint at lumina-ai.co.in
-  - Reverse proxies requests to Hugging Face Space
-  - Adds CORS, timeout handling, upload size guard, and security headers
-  - Prevents stale APK caching on /download-apk
+### Text Cleanup
 
-FastAPI Backend
-  - Serves website, legal pages, update metadata, and APK download
-  - Verifies Firebase bearer tokens for generation APIs
-  - Applies rate limits and daily usage counters
-  - Runs OCR, cleanup, structure parsing, semantic chunking, prompt building, generation, and formatting
+The cleanup stage removes simple OCR noise, repeated punctuation, repeated page artifacts, malformed spacing, and obvious extraction defects. It is intentionally conservative: it prepares text for normalization without summarizing or deleting meaningful content.
 
-Firebase
-  - Authentication
-  - Firestore user profiles, summaries, folders, favorites, usage counters, feedback
-  - Analytics, Crashlytics, and App Check support in the app
-```
+### Smart Text Normalization
 
-## Backend
+Smart normalization repairs dense OCR text by reconstructing likely boundaries such as headings, bullet items, question-style headings, roman numerals, labels, and dense document markers. It protects URLs, emails, numbers, and technical tokens so cleanup does not corrupt meaningful data.
 
-The backend is in `ai_backend` and is built with FastAPI.
+### Semantic Preservation
 
-Important files:
+Semantic preservation applies task-aware rules to reduce obvious noise while protecting important lines. It is designed to avoid the common failure mode where OCR cleanup accidentally removes short but important content such as names, dates, amounts, headings, or action items.
 
-```text
-main.py                         FastAPI app, API routes, public website, legal pages
-requirements.txt                Python dependencies
-Dockerfile                      Hugging Face Docker Space runtime
-runtime.txt                     Python runtime declaration
-static/Lumina-AI.apk            Public Android APK served by /download-apk
-model_systems/                  OCR, document analysis, prompt, generation, and formatting pipeline
-cloudflare-worker/              Cloudflare Worker reverse proxy
-```
+### Document Structure Parsing
 
-### Backend Responsibilities
-
-- Serve the public website at `/`.
-- Serve Play Store-ready legal pages:
-  - `/privacy-policy`
-  - `/terms-and-conditions`
-- Serve Android update metadata at `/app-version`.
-- Serve the latest APK at `/download-apk`.
-- Serve the download landing page at `/download-app` and `/update`.
-- Verify Firebase authentication for protected generation endpoints.
-- Enforce request rate limits and per-user daily usage limits.
-- Extract, clean, normalize, structure, chunk, summarize, and format user content.
-
-## Public Website
-
-The backend renders a lightweight professional website directly from `main.py`.
-
-Current public pages:
-
-```text
-GET /                         Homepage
-GET /download-app             Android download page
-GET /update                   Alias for the download page
-GET /privacy-policy           Privacy Policy
-GET /terms-and-conditions     Terms & Conditions
-GET /app-version              JSON metadata for app updates
-GET /download-apk             APK binary download
-GET /health                   Backend health/status JSON
-```
-
-The website includes animated UI preview elements, app status loading, APK version display, mode previews, policy links, and download links. Legal pages use a simple top Back button so the navigation is cleaner when reading policy content.
-
-## Android Update Flow
-
-The Flutter app uses `AppUpdateService` to call:
-
-```text
-https://lumina-ai.co.in/app-version
-```
-
-The backend returns metadata such as:
-
-```json
-{
-  "latestVersionName": "2.0.9",
-  "latestVersionCode": 11,
-  "minimumSupportedVersionCode": 1,
-  "forceUpdate": false,
-  "downloadUrl": "https://lumina-ai.co.in/download-apk?v=11",
-  "updatePageUrl": "https://lumina-ai.co.in/update",
-  "releaseNotes": []
-}
-```
-
-The installed app compares `latestVersionCode` with its built-in `currentVersionCode`. If the server version is higher, the app shows an update modal. The update button opens the APK download URL.
-
-Important Android limitation: sideloaded APKs cannot silently update themselves. Android always requires user confirmation before installing an APK. The app can open the official download/install flow, but it cannot reinstall itself in the background.
-
-Current app version:
-
-```text
-versionName: 2.0.9
-versionCode: 11
-```
-
-To prevent repeated update prompts, the backend and deployed secrets must agree with the APK version. Use:
-
-```text
-PUBLIC_APP_VERSION_NAME=2.0.9
-PUBLIC_APP_VERSION_CODE=11
-```
-
-Do not keep older `APP_VERSION_NAME` or `APP_VERSION_CODE` environment variables in Hugging Face secrets, because they can cause stale version metadata.
-
-## Cloudflare Worker
-
-The Worker lives in:
-
-```text
-ai_backend/cloudflare-worker/
-```
-
-Main files:
-
-```text
-wrangler.toml                  Production Worker config and routes
-wrangler.workers-dev.toml      workers.dev fallback config
-src/worker.js                  Reverse proxy implementation
-```
-
-Production routes:
-
-```text
-lumina-ai.co.in/*
-www.lumina-ai.co.in/*
-```
-
-Worker responsibilities:
-
-- Proxy GET, POST, and multipart upload requests to Hugging Face.
-- Preserve important headers such as `Authorization`, `Content-Type`, and `Origin`.
-- Add CORS headers for allowed origins.
-- Enforce a maximum upload size using `MAX_UPLOAD_BYTES`.
-- Apply request timeout handling using `REQUEST_TIMEOUT_MS`.
-- Return Hugging Face responses transparently.
-- Rewrite Hugging Face `Location` redirects to the public Lumina domain.
-- Add security headers such as `X-Content-Type-Options` and `Referrer-Policy`.
-- Disable caching for `/download-apk` so users receive the newest APK.
-
-Current Worker variables:
-
-```text
-ORIGIN_BASE_URL=https://kpatel1607-lumina.hf.space
-PUBLIC_BASE_URL=https://lumina-ai.co.in
-ALLOWED_ORIGINS=https://lumina-ai.co.in,https://www.lumina-ai.co.in
-MAX_UPLOAD_BYTES=15728640
-REQUEST_TIMEOUT_MS=120000
-```
-
-Deploy the Worker from `ai_backend/cloudflare-worker`:
-
-```bash
-wrangler deploy
-```
-
-## Hugging Face Deployment
-
-The backend is configured for Hugging Face Spaces using the Docker SDK.
-
-The Dockerfile:
-
-- Uses `python:3.11-slim`.
-- Installs `tesseract-ocr`, `libgl1`, and `libglib2.0-0`.
-- Installs Python dependencies from `requirements.txt`.
-- Runs Uvicorn on port `7860`.
-- Keeps heavyweight OCR/layout models disabled by default for memory stability.
-
-Start command:
-
-```bash
-uvicorn main:app --host 0.0.0.0 --port 7860 --workers 1
-```
-
-Required Hugging Face secrets:
-
-```text
-FIREBASE_SERVICE_ACCOUNT_JSON
-LUMINA_API_KEY
-LUMINA_GENERATION_PROVIDER=gemini
-LUMINA_MODEL_NAME=gemini-2.0-flash
-PUBLIC_BASE_URL=https://lumina-ai.co.in
-CUSTOM_DOMAIN=https://lumina-ai.co.in
-ALLOWED_ORIGINS=https://lumina-ai.co.in,https://www.lumina-ai.co.in
-ALLOWED_HOSTS=lumina-ai.co.in,www.lumina-ai.co.in,*.hf.space,localhost,127.0.0.1
-PUBLIC_APP_VERSION_NAME=2.0.9
-PUBLIC_APP_VERSION_CODE=11
-```
-
-Optional deployment variables:
-
-```text
-APP_DOWNLOAD_PATH=/download-apk
-MAX_UPLOAD_BYTES=15728640
-LUMINA_ENABLE_STRUCTURE_MODEL=false
-LUMINA_ENABLE_PADDLEOCR=false
-```
-
-## Backend API
-
-### Health
-
-```text
-GET /health
-```
-
-Returns backend status, app name, app version, generation provider, and whether the model system is enabled.
-
-### App Version
-
-```text
-GET /app-version
-```
-
-Returns Android update metadata consumed by the Flutter app.
-
-### Download APK
-
-```text
-GET /download-apk
-```
-
-Returns `static/Lumina-AI.apk` with APK content type and no-cache headers.
-
-### Generate From Text
-
-```text
-POST /v2/generate
-Authorization: Bearer <Firebase ID token>
-Content-Type: application/json
-```
-
-Request body:
-
-```json
-{
-  "text": "User notes or extracted document text",
-  "mode": "student",
-  "task": "important_notes"
-}
-```
-
-Supported modes:
-
-```text
-student
-professional
-general
-```
-
-Supported student tasks:
-
-```text
-important_notes
-qa_generation
-answer_questions
-flashcards
-mcqs
-beginner_explanation
-revision_sheet
-```
-
-Supported professional tasks:
-
-```text
-executive_summary
-main_points
-action_items
-meeting_minutes
-structured_report
-table_format
-email_draft
-```
-
-Supported general tasks:
-
-```text
-short_summary
-bullet_summary
-key_points
-simplify
-clean_text
-```
-
-The response includes generated markdown/plain text, mode, task, provider, model, sections, usage count, and daily limit details.
-
-### Generate From File
-
-```text
-POST /v2/generate-file
-Authorization: Bearer <Firebase ID token>
-Content-Type: multipart/form-data
-```
-
-Accepts uploaded documents/images, extracts text through the backend pipeline, and returns generated output. This endpoint exists for backend-side file extraction, while the current Flutter home screen mostly extracts PDF/image text on-device before sending text to `/v2/generate`.
-
-### Legacy Summary
-
-```text
-POST /summarize
-```
-
-Legacy summarization route kept for compatibility. New app flows should prefer `/v2/generate`.
-
-## Model System
-
-The model pipeline is inside:
-
-```text
-ai_backend/model_systems/
-```
-
-Pipeline order:
-
-```text
-InputUnderstandingSystem
-  -> OCRPipeline
-  -> TextCleanupPipeline
-  -> SmartTextNormalizer
-  -> DocumentStructureParser
-  -> SemanticChunker
-  -> ModeRouter
-  -> PromptBuilder
-  -> GenerationService
-  -> ResponsePostprocessor
-  -> OutputFormatter
-```
-
-### Input Understanding
-
-`input_understanding.py` detects input type and chooses extraction strategy. It distinguishes plain text, normal PDFs, scanned PDFs, and images.
-
-### OCR Pipeline
-
-`ocr_pipeline.py` handles extraction:
-
-- Plain text passthrough.
-- PDF text extraction with PyMuPDF.
-- PDF table detection through PyMuPDF table APIs when available.
-- Scanned PDF extraction by rendering pages and applying OCR.
-- Image OCR through RapidOCR ONNX by default.
-- Optional PaddleOCR path when enabled.
-- Tesseract fallback support through the Docker image.
-
-Default deploy-friendly OCR stack:
-
-```text
-rapidocr-onnxruntime
-pytesseract fallback
-PyMuPDF for PDF text/tables
-OpenCV/Pillow preprocessing
-```
-
-PaddleOCR and PPStructure are intentionally disabled by default because they can exceed memory limits on free or small Hugging Face/Render instances.
-
-### Cleanup and Normalization
-
-`text_cleanup_pipeline.py` and `smart_text_normalizer.py` remove repeated OCR noise, repair common OCR merges, normalize spacing, and prepare cleaner text for structure parsing and generation.
-
-### Document Structure Parser
-
-`document_structure_parser.py` detects document structure such as:
-
-- Title
-- Sections and headings
-- Paragraphs
-- Bullet points
-- Numbered lists
-- Roman numeral lists
-- Questions
-- Key-value fields
-- Tables inferred from text
-- Optional layout blocks from PPStructure
-
-When `LUMINA_ENABLE_STRUCTURE_MODEL=true` and the dependencies are installed, PPStructure can be used for heavier layout analysis. In the current deploy profile it remains off for stability.
+The parser converts normalized text into structured signals: title, sections, paragraphs, lists, questions, key-value fields, contact lines, links, and table-like rows. This stage exists because an LLM can infer structure, but asking it to infer everything from flattened text increases hallucination and formatting risk.
 
 ### Semantic Chunking
 
-`semantic_chunker.py` converts structured text into chunks such as sections, paragraphs, tables, key-value fields, and layout sections. For long documents it can recommend hierarchical summarization instead of a single generation call.
+Long or structure-rich documents are split into chunks that preserve source order and meaning. Chunks can represent sections, paragraphs, tables, key-value groups, layout blocks, or plain text segments. This supports hierarchical generation for larger inputs.
 
 ### Mode Routing
 
-`mode_router.py` maps the user's selected mode and task into a generation target. Student, professional, and general modes use different expectations for tone, structure, and output type.
+Mode routing maps the user selected mode and task to a generation target. Student, professional, and general modes use different output expectations, tone, and structure.
 
-### Prompt Builder
+### Prompt Building
 
-`prompt_builder.py` creates compact prompts for short/simple text and structured prompts for longer, table-heavy, or layout-rich documents.
+The prompt builder constructs task-specific prompts using source text, structure summaries, selected chunks, routing metadata, document type, and task policy. It includes special instructions for table formatting, question answering, study notes, action items, reports, emails, and other outputs.
 
-Current behavior:
+### Gemini Generation
 
-- Text below about 650 words can use compact prompts.
-- Long documents and structured documents use semantic chunks and structure summaries.
-- Student mode prioritizes study notes, revision, Q&A, MCQs, and flashcards.
-- Professional mode prioritizes traceable business output, owners, deadlines, risks, reports, meeting notes, and tables.
-- General mode prioritizes concise summaries, simplified text, key points, and cleanup.
+The generation service sends the prompt to Gemini. The current backend uses a Gemini-only path. The provider abstraction is the intended design direction so model-specific code can be isolated while preserving the existing `GenerationService` response contract.
 
-### Generation Service
+### Response Postprocessing
 
-`generation_service.py` sends prompts to the configured model provider.
+The postprocessor removes generic model wrappers, duplicate headings, empty sections, broken bullets, repeated lines, and common markdown defects. It does not replace the main formatting layer; it prepares generated text for final schema formatting.
 
-Current provider path:
+### Output Formatting
+
+The formatter returns a Flutter-compatible response with markdown, plain text, sections, and structured table data. It includes task-specific repairs, especially for `table_format`, where the frontend needs markdown and structured table metadata.
+
+## Repository Structure and File Responsibilities
+
+The active backend repository is:
 
 ```text
-LUMINA_GENERATION_PROVIDER=gemini
-LUMINA_MODEL_NAME=gemini-2.0-flash
-LUMINA_API_KEY=<Gemini API key>
+ai_backend/
+  main.py
+  requirements.txt
+  Dockerfile
+  runtime.txt
+  README.md
+  README_HF_SPACE.md
+  celery_worker.py
+  test_full_generation_pipeline.py
+  model_systems/
+  cloudflare-worker/
 ```
 
-An Ollama path exists for local model experiments, with Gemini fallback behavior for cases where small local models are weak on structured prompts.
+The files below are grouped by the intended production module architecture. The current implementation may keep flat compatibility imports during migration.
 
-### Postprocessing and Formatting
+### core/
 
-`response_postprocessor.py` removes generic AI openings and cleans repeated phrasing.
+#### core/pipeline_router.py
 
-`output_formatter.py` formats the final output and contains special handling for table output. If a valid markdown table is missing, it tries to build one from detected tables or key-value fields.
+Purpose: Orchestrates the full document pipeline from input analysis through final formatting.
 
-This table formatter is one of the key places to improve next, because accurate table reconstruction depends heavily on extraction quality, row/column detection, and stronger layout analysis.
+Why it exists: The system has many explicit stages. A central router keeps the application API simple while allowing extraction, cleanup, parsing, chunking, generation, and formatting to evolve independently.
 
-## Flutter App
+Pipeline role: Coordinates input analysis, extraction, cleanup, normalization, preservation, structure parsing, chunking, mode routing, prompt building, generation, postprocessing, and output formatting.
 
-The app lives in:
+#### core/mode_router.py
+
+Purpose: Converts the selected mode and task into a generation target.
+
+Why it exists: Student, professional, and general workflows require different tone, detail, structure, and output shapes.
+
+Pipeline role: Runs after chunking and before prompt construction.
+
+#### core/route_selector.py
+
+Purpose: Selects route metadata such as light, standard, or heavy processing paths based on extracted features and complexity.
+
+Why it exists: Not all documents need the same processing budget. Routing helps protect latency, cost, and deployment memory.
+
+Pipeline role: Connects input features and complexity scoring to downstream processing decisions.
+
+#### core/schema_validator.py
+
+Purpose: Ensures API responses contain required frontend-compatible fields.
+
+Why it exists: The Flutter app expects stable keys even when generation fails, cache hits occur, or route metadata is incomplete.
+
+Pipeline role: Validates final response payloads before returning them through FastAPI.
+
+#### core/safety_controls.py
+
+Purpose: Applies endpoint limits, heavy-route limits, PDF page checks, violation tracking, and timeout wrappers.
+
+Why it exists: Document processing can be expensive and must be bounded for public deployment.
+
+Pipeline role: Guards endpoints and heavy processing paths before and during generation.
+
+#### core/routing_logger.py
+
+Purpose: Logs routing decisions and processing metadata.
+
+Why it exists: Routing quality, cache behavior, and user feedback need observability without storing raw document content.
+
+Pipeline role: Records request metadata after generation or cache lookup.
+
+#### core/job_status.py
+
+Purpose: Stores asynchronous job status, result payloads, and errors.
+
+Why it exists: Large documents may need background processing rather than a single blocking request.
+
+Pipeline role: Supports `/v2/jobs/generate` and `/v2/jobs/{job_id}`.
+
+#### core/task_queue.py
+
+Purpose: Provides queue mode selection and background task dispatch hooks.
+
+Why it exists: The project supports in-process operation now and can be extended to Celery/Redis-backed workers.
+
+Pipeline role: Bridges API requests to synchronous or background processing.
+
+### input/
+
+#### input/input_analyzer.py
+
+Purpose: Analyzes raw text or files and returns structured input metadata.
+
+Why it exists: Extraction and routing depend on input type, page count, selectable text, file size, and table-like signals.
+
+Pipeline role: Runs near the beginning of text and file workflows.
+
+#### input/input_understanding.py
+
+Purpose: Infers document type and high-level intent signals from text or files.
+
+Why it exists: Different documents benefit from different prompt policies and structure assumptions.
+
+Pipeline role: Supplies document understanding metadata to the pipeline.
+
+#### input/feature_extractor.py
+
+Purpose: Converts input analysis into route-friendly numeric and categorical features.
+
+Why it exists: Route selection should use explicit features rather than scattered heuristics.
+
+Pipeline role: Feeds the complexity scorer and route selector.
+
+#### input/complexity_scorer.py
+
+Purpose: Scores document complexity based on extracted features.
+
+Why it exists: Long, table-heavy, OCR-heavy, or structure-rich documents need different handling from short pasted text.
+
+Pipeline role: Helps choose light, standard, or heavy paths.
+
+### extraction/
+
+#### extraction/extraction_router.py
+
+Purpose: Routes text, PDF, scanned PDF, and image inputs to the correct extractor.
+
+Why it exists: A single extraction function would become brittle because digital PDFs, scanned PDFs, and images require different strategies.
+
+Pipeline role: Entry point for backend-side extraction.
+
+#### extraction/digital_pdf_extractor.py
+
+Purpose: Extracts selectable text and tables from digital PDFs.
+
+Why it exists: Digital PDFs can preserve text and table structure better than OCR, so OCR should not be the first option.
+
+Pipeline role: Handles PDF files with selectable text.
+
+#### extraction/scanned_pdf_extractor.py
+
+Purpose: Renders scanned PDF pages and sends page images to image OCR.
+
+Why it exists: Scanned PDFs do not contain reliable selectable text.
+
+Pipeline role: Handles image-based PDFs.
+
+#### extraction/image_ocr_extractor.py
+
+Purpose: Extracts text, blocks, confidence, and OCR metadata from image files.
+
+Why it exists: Image OCR requires preprocessing, engine fallback, and confidence handling.
+
+Pipeline role: Handles uploaded images and pages rendered from scanned PDFs.
+
+#### extraction/complex_document_extractor.py
+
+Purpose: Provides optional extraction hooks for richer document parsing such as Docling.
+
+Why it exists: Layout-aware extraction is planned for more complex documents, but it must remain optional for lightweight deployments.
+
+Pipeline role: Future-facing extractor for complex files when dependencies and memory allow it.
+
+#### extraction/ocr_pipeline.py
+
+Purpose: Normalizes extraction behavior across text, PDFs, scanned PDFs, images, OCR quality reports, and fallback logic.
+
+Why it exists: The rest of the pipeline needs consistent extracted text and metadata regardless of source type.
+
+Pipeline role: Main extraction interface used by the pipeline router.
+
+#### extraction/ocr_correction_model.py
+
+Purpose: Applies conservative OCR correction rules.
+
+Why it exists: OCR correction can damage source facts if it is too aggressive. This module keeps correction bounded.
+
+Pipeline role: Supports cleanup and OCR improvement without rewriting meaning.
+
+### preprocessing/
+
+#### preprocessing/text_cleanup_pipeline.py
+
+Purpose: Cleans OCR text by normalizing spacing, bullets, punctuation, repeated artifacts, and page noise.
+
+Why it exists: OCR output often contains mechanical noise that hurts structure parsing and prompt quality.
+
+Pipeline role: Runs before smart normalization.
+
+#### preprocessing/smart_text_normalizer.py
+
+Purpose: Reconstructs high-confidence document boundaries such as headings, bullet items, question-style headings, roman list markers, and labels while preserving URLs, emails, numbers, and technical tokens.
+
+Why it exists: OCR often flattens visual layout into one paragraph, so this module restores useful structure before parsing.
+
+Pipeline role: Runs after cleanup and before semantic preservation.
+
+#### preprocessing/semantic_preservation_filter.py
+
+Purpose: Removes obvious noise while protecting important content according to mode and task.
+
+Why it exists: Cleanup systems can accidentally remove meaningful short lines. This module preserves source value before parsing and generation.
+
+Pipeline role: Runs before final structure parsing.
+
+### structure/
+
+#### structure/document_structure_parser.py
+
+Purpose: Detects titles, sections, questions, bullets, numbered items, roman numerals, key-value fields, links, contact lines, paragraphs, and text-derived tables.
+
+Why it exists: Explicit structure reduces the amount of layout inference expected from the language model.
+
+Pipeline role: Produces structured document signals for chunking and prompt building.
+
+### retrieval/
+
+#### retrieval/semantic_chunker.py
+
+Purpose: Splits structured documents into source-order chunks and assigns chunk metadata.
+
+Why it exists: Long documents cannot always be safely handled as one prompt, and structure-aware chunks improve hierarchical generation.
+
+Pipeline role: Runs after structure parsing.
+
+#### retrieval/semantic_cache.py
+
+Purpose: Provides a semantic cache interface for similar request reuse.
+
+Why it exists: Reusing previous results can reduce latency and cost when the same or similar content is processed.
+
+Pipeline role: Supports cache-ready architecture. Persistent vector search is planned, not fully implemented.
+
+#### retrieval/request_hashing.py
+
+Purpose: Normalizes request text and creates stable cache keys.
+
+Why it exists: Exact cache hits require deterministic hashing that ignores harmless whitespace and common OCR noise.
+
+Pipeline role: Used by API endpoints before generation.
+
+#### retrieval/redis_cache.py
+
+Purpose: Stores and retrieves exact cached responses in Redis when configured.
+
+Why it exists: Redis allows deployment-friendly exact cache behavior without changing the generation pipeline.
+
+Pipeline role: Used by API endpoints for cache lookup and persistence.
+
+### generation/
+
+#### generation/prompt_builder.py
+
+Purpose: Builds compact and expanded prompts using task, mode, source text, structure, chunks, and route metadata.
+
+Why it exists: Good outputs require task-specific instructions. A generic summarization prompt is not enough for Q&A, flashcards, tables, emails, or reports.
+
+Pipeline role: Runs after mode routing and before generation.
+
+#### generation/generation_service.py
+
+Purpose: Provides the generation interface used by the pipeline.
+
+Why it exists: The pipeline should call one generation service even if provider internals change.
+
+Pipeline role: Sends prompts to Gemini in the current implementation and returns normalized generation metadata.
+
+#### generation/response_postprocessor.py
+
+Purpose: Cleans generated markdown by removing wrappers, generic closings, duplicate headings, broken bullets, and repeated lines.
+
+Why it exists: LLM output can include conversational wrappers or minor markdown defects.
+
+Pipeline role: Runs after generation and before final formatting.
+
+#### generation/output_formatter.py
+
+Purpose: Converts generated text into a stable frontend schema with markdown, plain text, sections, and table data.
+
+Why it exists: The Flutter app needs predictable fields for rendering, saving, sharing, exporting, and table display.
+
+Pipeline role: Final pipeline stage before API response assembly.
+
+### providers/
+
+#### providers/base_provider.py
+
+Purpose: Defines the intended interface for model providers.
+
+Why it exists: Provider-specific behavior should be isolated from pipeline orchestration.
+
+Pipeline role: Planned abstraction for normalized provider responses.
+
+#### providers/gemini_provider.py
+
+Purpose: Intended Gemini implementation for the provider layer.
+
+Why it exists: Gemini-specific model validation, request payloads, API errors, and fallback behavior should live outside the generic generation service.
+
+Pipeline role: Planned active provider behind `GenerationService`.
+
+#### providers/provider_router.py
+
+Purpose: Intended provider selector based on environment configuration.
+
+Why it exists: The system should support a clean default provider today and future providers later without mixing APIs.
+
+Pipeline role: Planned bridge between `GenerationService` and concrete provider implementations.
+
+### legacy/
+
+No legacy module is required conceptually. If files cannot be moved safely during refactoring, they should be placed here only when they are retained for compatibility and not part of the active pipeline.
+
+## Modes and Tasks
+
+### Student Mode
+
+- `important_notes`: Produces study-focused notes from source content.
+- `answer_questions`: Answers explicit questions in the source or user input.
+- `qa_generation`: Builds question-and-answer study material.
+- `flashcards`: Produces flashcard-style revision items.
+- `mcqs`: Generates multiple-choice questions.
+- `beginner_explanation`: Explains source material in simpler language.
+- `revision_sheet`: Builds a concise revision-ready sheet.
+
+### Professional Mode
+
+- `executive_summary`: Summarizes documents for decision makers.
+- `main_points`: Extracts major points and business-relevant details.
+- `action_items`: Extracts owners, tasks, deadlines, and follow-ups when present.
+- `meeting_minutes`: Converts notes into meeting minutes.
+- `structured_report`: Produces a report-style output.
+- `table_format`: Produces structured table output.
+- `email_draft`: Builds an email draft from source material.
+
+### General Mode
+
+- `short_summary`: Produces a concise summary.
+- `bullet_summary`: Produces a bullet-based summary.
+- `key_points`: Extracts key ideas.
+- `simplify`: Rewrites content in simpler language.
+- `clean_text`: Cleans and formats text without changing meaning.
+
+## Output Schema
+
+The frontend-compatible document response is expected to preserve these fields:
 
 ```text
-notes_summarizer_app/
-```
-
-Important files:
-
-```text
-lib/main.dart                         Firebase init, theme init, app root
-lib/screens/home_screen.dart          Main input/generation workspace
-lib/screens/history_screen.dart       Saved summaries, folders, favorites
-lib/screens/profile_screen.dart       Profile, theme, legal links, update, account controls
-lib/screens/analytics_screen.dart     User summary/folder/mode analytics
-lib/screens/about_screen.dart         App information and feedback
-lib/screens/onboarding_screen.dart    First-run tour
-lib/services/api_service.dart         Backend generation client
-lib/services/app_update_service.dart  App version/update client
-lib/services/auth_service.dart        Firebase auth/profile/account deletion
-lib/services/firebase_service.dart    Firestore summaries/folders/usage
-lib/theme/app_theme.dart              Light/dark/appearance theme definitions
-lib/theme/theme_controller.dart       Saved theme mode and appearance
-```
-
-### App Features
-
-- Email/password signup and login.
-- Google sign-in.
-- Email verification and password reset.
-- Profile update with display name, photo URL, recovery email, and password update.
-- Account deletion that removes user profile, summaries, and folders.
-- Onboarding/tour for new users.
-- Paste text manually.
-- Extract PDF text on-device.
-- Extract image text with Google ML Kit.
-- Capture camera images and extract text.
-- Generate AI output in Student, Professional, and General modes.
-- Save generated summaries to Firestore.
-- View, search, favorite, delete, and open saved summaries.
-- Create folders and assign summaries to folders.
-- Analytics view for generated documents, folders, favorites, and mode usage.
-- About screen with feedback submission.
-- Theme mode selection and appearance presets.
-- Update prompt through `/app-version`.
-- Legal links that open the hosted privacy policy and terms pages.
-
-### Current App API Configuration
-
-`AppUpdateService` uses the public domain:
-
-```text
-https://lumina-ai.co.in
-```
-
-`ApiService` currently points generation requests directly to:
-
-```text
-https://kpatel1607-lumina.hf.space
-```
-
-Recommended next cleanup: change generation requests to use the public domain too, so the Flutter app only talks to `https://lumina-ai.co.in` and never exposes the Hugging Face origin.
-
-## Firebase Data Model
-
-The app uses Firebase Auth and Cloud Firestore.
-
-Known collections:
-
-```text
-users       User profile data
-summaries   Generated documents and saved summaries
-folders     User-created folders
-usage       Daily usage counters
-feedback    Feedback from the About screen
-```
-
-Typical `summaries` fields:
-
-```text
-uid
-userEmail
-userName
 title
-input
-summary
 markdown
+plain_text
 plainText
 sections
+section_count
 sectionCount
+tables
+table_count
+tableCount
 mode
 task
 format
-provider
 model
-usageCount
-dailyLimit
-folder
-favorite
-type
-createdAt
-timestamp
+provider
+route
+modelTier
+cached
+metadata
 ```
 
-Typical `users` fields:
+`markdown` is used for rich document display and export. `plain_text` and `plainText` support compatibility with Python and Flutter naming conventions. `sections` and `sectionCount` support document navigation. `tables`, `table_count`, and `tableCount` allow table-aware frontend rendering instead of forcing the app to parse markdown manually. `metadata` carries route, model tier, cache, and formatting diagnostics.
+
+## Technical Design Decisions
+
+### Why Gemini 2.5 Flash
+
+Gemini 2.5 Flash is used because the project needs a balance of instruction following, document transformation quality, latency, and cost. It is suitable for structured summarization, Q&A, table formatting, and mixed student/professional tasks. A lighter fallback model can be configured for lower-cost or quota-sensitive paths.
+
+### Why Provider Abstraction Exists
+
+Provider abstraction separates model-specific API details from the pipeline. The pipeline should not care whether generation is performed by Gemini or another future provider. It should receive a normalized result containing success state, provider, model, generated text, error type, and fallback metadata.
+
+### Why OCR Cleanup Is Separate From Smart Normalization
+
+OCR cleanup removes mechanical extraction defects. Smart normalization reconstructs semantic and visual boundaries. Keeping them separate makes the pipeline easier to debug and prevents low-level cleaning rules from becoming responsible for higher-level document interpretation.
+
+### Why Structure Parsing Exists Even Though LLMs Can Infer Structure
+
+LLMs can infer structure, but asking the model to infer structure from flattened OCR text increases risk. Explicit parsing provides titles, headings, lists, questions, fields, and table candidates before generation. This improves prompt grounding and gives the formatter usable metadata.
+
+### Why the Formatter Returns Markdown, Plain Text, and Structured Tables
+
+Markdown is useful for readable output, export, and rich display. Plain text is useful for search, sharing, and fallback rendering. Structured tables allow the frontend to render tables natively instead of relying only on markdown parsing.
+
+### Why RAG Is Planned but Not Forced Yet
+
+Retrieval-augmented generation is useful only when extraction quality and chunk quality are strong. Lumina currently prioritizes accurate extraction, normalization, parsing, and chunking before making persistent RAG a required part of every request.
+
+## Current Bottlenecks
+
+- OCR quality depends heavily on the source image or scan quality.
+- Layout preservation is not yet as strong as a full Docling, LayoutLM, or Paddle layout-model workflow.
+- Complex multi-column PDFs can still be difficult.
+- Gemini quota and rate limits can affect generation availability.
+- OCR correction is conservative to avoid corrupting facts.
+- Persistent vector database and RAG workflows are planned, not fully implemented.
+- GraphRAG is future work and is not currently implemented.
+- Table reconstruction depends on extraction quality and can be unreliable for visually complex tables.
+
+## Future Work
+
+- Deeper Docling integration for layout-aware extraction.
+- Layout-aware OCR blocks with coordinates and reading-order recovery.
+- Persistent user knowledge base.
+- Temporary request-level RAG for long documents.
+- Persistent RAG for saved user documents.
+- Hybrid search across exact, semantic, and metadata filters.
+- Reranking for chunk selection.
+- Query rewriting and HyDE-style retrieval preparation.
+- Context compression for long document synthesis.
+- GraphRAG for multi-document knowledge relationships.
+- Evaluation loop with expected outputs for each mode and task.
+- Native table rendering improvements in Flutter.
+- Confidence-based OCR correction.
+- Stronger multi-column and table reconstruction.
+- CI checks for compile, app import, worker syntax, and response schema stability.
+
+## API Surface
+
+Important routes:
 
 ```text
-uid
-name
-username
-email
-photoUrl
-provider
-emailVerified
-recoveryEmail
-createdAt
-lastLogin
-updatedAt
+GET  /
+GET  /health
+GET  /app-version
+GET  /download-apk
+GET  /download-app
+GET  /update
+GET  /privacy-policy
+GET  /terms-and-conditions
+POST /v2/generate
+POST /v2/jobs/generate
+GET  /v2/jobs/{job_id}
+POST /v2/feedback
+POST /v2/generate-file
+POST /summarize
 ```
 
-## Security Notes
+`/v2/generate` is the main authenticated text-generation route. `/v2/generate-file` supports backend-side file extraction. `/summarize` is retained for legacy compatibility.
 
-Current security measures:
+## Frontend Integration
 
-- Firebase ID tokens are required for protected generation APIs.
-- Backend validates modes, tasks, and formats.
-- Backend applies request rate limiting.
-- Backend tracks per-user daily usage limits.
-- Cloudflare Worker limits upload size before proxying large requests.
-- Cloudflare Worker preserves auth headers and adds CORS only for allowed origins.
-- Cloudflare Worker adds browser security headers.
-- APK downloads are served with no-cache headers to avoid stale update loops.
-- Secrets are expected to be stored in Hugging Face/Cloudflare/Firebase, not committed.
-- Firebase App Check is initialized in the Flutter app.
+The Flutter app consumes the API response through `ApiService` and stores generated documents through Firebase services. The response schema must remain stable for:
 
-Sensitive local files exist in the workspace root, including Firebase service-account JSON files and OAuth client secrets. These should not be committed, uploaded publicly, or included inside client apps.
+- Workspace rendering.
+- History and folders.
+- Search and favorites.
+- Summary detail view.
+- Markdown/plain text export.
+- Table display and future native table rendering.
+- Feedback metadata.
 
-Recommended next security improvements:
+## Deployment Notes
 
-- Move the Flutter app into the same repository or a separate private repo with proper `.gitignore` rules.
-- Ensure all Firebase service-account files are removed from local shareable folders and rotated if they were ever exposed.
-- Use only the Cloudflare public domain in the app.
-- Add Firestore security rules review for `users`, `summaries`, `folders`, `usage`, and `feedback`.
-- Add Firebase App Check enforcement on Firebase services.
-- Add server-side file type validation and stricter MIME sniffing for uploads.
-- Add structured logging without storing raw user document text.
-
-## Local Development
-
-### Backend
+### Local Setup
 
 From `ai_backend`:
 
-```bash
+```powershell
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn main:app --reload --host 127.0.0.1 --port 7860
+uvicorn main:app --reload
 ```
 
-Useful checks:
+### Testing
 
-```bash
-python -m py_compile main.py
-node --check cloudflare-worker/src/worker.js
+```powershell
+python -m compileall model_systems
+python test_full_generation_pipeline.py
+python -c "from main import app; print('FastAPI app import OK')"
 ```
 
-### Flutter App
+### Environment
 
-From `notes_summarizer_app`:
-
-```bash
-flutter pub get
-flutter analyze
-flutter run
-```
-
-Build Android APK:
-
-```bash
-flutter build apk --release --target-platform android-arm64 --no-tree-shake-icons
-```
-
-After building a new APK, copy it into:
+Provider-layer target configuration:
 
 ```text
-ai_backend/static/Lumina-AI.apk
+GEMINI_API_KEY=
+GEMINI_PRIMARY_MODEL=gemini-2.5-flash
+GEMINI_FALLBACK_MODEL=gemini-2.5-flash-lite
+GENERATION_PROVIDER=gemini
+REDIS_URL=
+LUMINA_QUEUE_BACKEND=in_process
 ```
 
-Then update these version values together:
+Current compatibility variables may still be used by the existing generation service:
 
 ```text
-notes_summarizer_app/pubspec.yaml
-notes_summarizer_app/lib/services/app_update_service.dart
-ai_backend/main.py default PUBLIC_APP_VERSION_NAME/PUBLIC_APP_VERSION_CODE
-Hugging Face PUBLIC_APP_VERSION_NAME/PUBLIC_APP_VERSION_CODE secrets, if used
+LUMINA_API_KEY=
+LUMINA_MODEL_NAME=gemini-2.5-flash
+LUMINA_API_URL=
+LUMINA_GENERATION_PROVIDER=gemini
 ```
 
-## Deployment Checklist
+### GitHub / Hugging Face Deployment
 
-1. Build the Flutter release APK.
-2. Confirm APK metadata versionName/versionCode.
-3. Copy the APK to `ai_backend/static/Lumina-AI.apk`.
-4. Update backend app version defaults or Hugging Face `PUBLIC_APP_VERSION_*` secrets.
-5. Commit backend changes.
-6. Push to GitHub.
-7. Let Hugging Face rebuild the Docker Space.
-8. Deploy the Cloudflare Worker if Worker code changed.
-9. Check:
+The backend is prepared for Hugging Face Spaces using Docker. The Dockerfile installs system OCR dependencies, Python requirements, copies the backend, exposes port `7860`, and starts Uvicorn.
+
+The repository also contains a Cloudflare Worker under `cloudflare-worker/` that can proxy public domain traffic to the Hugging Face Space. This deployment shape is suitable for a portfolio and interview project. It should not be described as unsupported large-scale production infrastructure until persistent storage, queue hardening, monitoring, CI, and model evaluation are strengthened.
+
+## Requirements
+
+The backend uses FastAPI, Uvicorn, Firebase Admin, Redis/Celery hooks, PDF/OCR libraries, and optional document/OCR tooling:
 
 ```text
-https://lumina-ai.co.in/health
-https://lumina-ai.co.in/app-version
-https://lumina-ai.co.in/download-app
-https://lumina-ai.co.in/privacy-policy
-https://lumina-ai.co.in/terms-and-conditions
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+slowapi
+firebase-admin
+pymupdf
+pdfplumber
+pillow
+pytesseract
+opencv-python-headless
+rapidocr-onnxruntime
+redis
+celery
+sentence-transformers
+docling
 ```
 
-10. Install the downloaded APK on Android and confirm the update modal does not repeat when version codes match.
+Some dependencies are optional or deployment-sensitive. Heavy layout or OCR models should be enabled only on hardware that can support them.
 
-## Known Gaps And Next Improvements
+## Research and Engineering Positioning
 
-The next major update should focus on model accuracy, extraction quality, and mode-specific output reliability.
+Lumina AI is best understood as a structure-aware document intelligence system. It tests the hypothesis that document generation quality improves when extraction, cleanup, normalization, structure parsing, chunking, routing, prompt design, generation, and formatting are treated as separate engineering problems.
 
-Highest-priority model improvements:
-
-- Replace simple formatting fallbacks with stronger document structure and table reconstruction logic.
-- Improve table extraction for professional `table_format`, especially row/column alignment and empty-cell handling.
-- Add a dedicated document layout model for PDFs/images when deployment memory allows it.
-- Improve OCR quality for scanned PDFs, handwritten notes, low-resolution images, and multi-column documents.
-- Add confidence scoring for OCR and extraction quality.
-- Add tests using real sample PDFs/images for every mode and task.
-- Improve prompt evaluation with expected outputs for student/professional/general tasks.
-- Add automatic retries or repair prompts when output violates task format.
-- Make `/v2/generate-file` the preferred path for file uploads when backend OCR is stronger than device OCR.
-
-Highest-priority app improvements:
-
-- Add direct file upload to backend `/v2/generate-file` for stronger OCR/document analysis.
-- Improve profile photo upload by using Firebase Storage or another secure media store instead of only photo URLs.
-- Add richer onboarding steps for modes, folders, history, exports, and updates.
-- Add export options such as PDF, TXT, Markdown, and share.
-- Add better offline/error states for Hugging Face cold starts.
-
-Highest-priority deployment improvements:
-
-- Keep Hugging Face deployment light by default and enable heavier models only on larger Spaces.
-- Consider a GPU Space or separate OCR worker for advanced layout/OCR models.
-- Add CI checks for Python compile, Worker syntax, Flutter analyze, and APK version consistency.
-- Use Git LFS or release assets for APK distribution if APK size keeps growing.
-
-## Current Version Snapshot
-
-```text
-Backend app version: 2.0.9
-Android app version: 2.0.9+11
-Public domain: https://lumina-ai.co.in
-Backend origin: https://kpatel1607-lumina.hf.space
-Generation provider: Gemini
-Default model: gemini-2.0-flash
-Deploy target: Hugging Face Docker Space
-Edge proxy: Cloudflare Worker
-```
+The project does not claim that OCR, table recovery, RAG, or GraphRAG are solved completely. Instead, it provides a practical foundation where each stage can be evaluated, replaced, and improved without rewriting the whole backend.

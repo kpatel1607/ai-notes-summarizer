@@ -1,4 +1,13 @@
-from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File, Form
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+    File,
+    Form,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
@@ -16,13 +25,23 @@ import re
 import html
 import json
 import tempfile
+import time
+import hashlib
 import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth, firestore
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from urllib.parse import urlparse
 
 from model_systems.pipeline_router import PipelineRouter
+from model_systems.job_status import JobStatusStore
+from model_systems.redis_cache import RedisExactCache
+from model_systems.request_hashing import RequestHasher
+from model_systems.routing_logger import RoutingLogger
+from model_systems.safety_controls import SafetyControls, SafetyError
+from model_systems.schema_validator import SchemaValidator
+from model_systems.semantic_cache import SemanticCache
+from model_systems.task_queue import TaskQueue
 
 
 load_dotenv()
@@ -42,8 +61,8 @@ CUSTOM_DOMAIN = os.getenv(
     "CUSTOM_DOMAIN",
     "https://lumina-ai.co.in",
 ).strip().rstrip("/")
-APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "2.0.9")
-APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "11"))
+APP_VERSION_NAME = os.getenv("PUBLIC_APP_VERSION_NAME", "3.0.0")
+APP_VERSION_CODE = int(os.getenv("PUBLIC_APP_VERSION_CODE", "30"))
 APP_DOWNLOAD_PATH = os.getenv("APP_DOWNLOAD_PATH", "/download-apk")
 APK_FILE_PATH = os.getenv("APK_FILE_PATH", "static/Lumina-AI.apk")
 APP_RELEASE_NOTES = [
@@ -200,6 +219,21 @@ def rate_limit_handler(
     )
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(
+    request: Request,
+    exc: Exception,
+):
+    print("Unhandled API error:", exc.__class__.__name__)
+
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Unexpected server error. Please try again.",
+        },
+    )
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -210,6 +244,13 @@ app.add_middleware(
 
 
 lumina_router = PipelineRouter()
+request_hasher = RequestHasher()
+exact_cache = RedisExactCache()
+semantic_cache = SemanticCache()
+job_status_store = JobStatusStore()
+task_queue = TaskQueue()
+schema_validator = SchemaValidator()
+safety_controls = SafetyControls()
 
 
 class NoteRequest(BaseModel):
@@ -241,6 +282,16 @@ class GenerateRequest(BaseModel):
         default="important_notes",
         max_length=50,
     )
+
+
+class FeedbackRequest(BaseModel):
+    title: str = Field(default="", max_length=160)
+    mode: str = Field(default="general", max_length=30)
+    task: str = Field(default="short_summary", max_length=50)
+    rating: int = Field(..., ge=1, le=5)
+    tags: list[str] = Field(default_factory=list, max_length=12)
+    route: str = Field(default="", max_length=40)
+    modelTier: str = Field(default="", max_length=40)
 
 
 def require_firebase() -> None:
@@ -287,11 +338,11 @@ def verify_firebase_user(
         return decoded_token
 
     except Exception as e:
-        print("Firebase token verification error:", str(e))
+        print("Firebase token verification error:", e.__class__.__name__)
 
         raise HTTPException(
             status_code=401,
-            detail=str(e),
+            detail="Invalid or expired login session",
         )
 
 
@@ -299,6 +350,8 @@ firestore_db = None
 
 if firebase_admin._apps:
     firestore_db = firestore.client()
+
+routing_logger = RoutingLogger(firestore_db)
 
 
 def clean_input_text(text: str) -> str:
@@ -374,6 +427,365 @@ def generation_error_status(result: Dict[str, Any]) -> int:
         return 503
 
     return 500
+
+
+def extract_route_metadata(result: Dict[str, Any]) -> Dict[str, Any]:
+    pipeline_output = result.get("pipeline_output", {})
+
+    if not isinstance(pipeline_output, dict):
+        return {
+            "routeConfig": {},
+            "complexity": {},
+        }
+
+    routing = pipeline_output.get("routing", {})
+
+    if not isinstance(routing, dict):
+        return {
+            "routeConfig": {},
+            "complexity": {},
+        }
+
+    return {
+        "routeConfig": routing.get("route_config", {}),
+        "complexity": routing.get("complexity", {}),
+        "features": routing.get("features", {}),
+        "input_analysis": routing.get("input_analysis", {}),
+    }
+
+
+def anonymized_request_id(
+    *,
+    user_uid: str,
+    selected_mode: str,
+    selected_task: str,
+    cleaned_text: str,
+) -> str:
+    return request_hasher.cache_key(
+        user_id=user_uid,
+        task=selected_task,
+        mode=selected_mode,
+        text=cleaned_text,
+    ).split(":")[-1]
+
+
+def anonymized_file_request_id(file_path: str) -> str:
+    digest = hashlib.sha256()
+
+    with open(file_path, "rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+
+    return digest.hexdigest()
+
+
+def cached_payload_matches_request(
+    cached_payload: Optional[Dict[str, Any]],
+    *,
+    selected_mode: str,
+    selected_task: str,
+) -> bool:
+    if not isinstance(cached_payload, dict):
+        return False
+
+    cached_mode = str(cached_payload.get("mode") or "").lower().strip()
+    cached_task = str(cached_payload.get("task") or "").lower().strip()
+
+    return cached_mode == selected_mode and cached_task == selected_task
+
+
+def log_routing_event(
+    *,
+    user_uid: str,
+    request_id: str,
+    route_metadata: Dict[str, Any],
+    started_at: float,
+    cache_hit: bool = False,
+    error_type: str = "",
+    user_feedback_rating: Optional[int] = None,
+) -> None:
+    elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+    routing_logger.log(
+        user_id=user_uid,
+        anonymized_request_id=request_id,
+        route_metadata=route_metadata,
+        processing_time_ms=elapsed_ms,
+        cache_hit=cache_hit,
+        error_type=error_type,
+        user_feedback_rating=user_feedback_rating,
+    )
+
+
+def usage_weight_for_route(route_metadata: Dict[str, Any]) -> int:
+    route_config = route_metadata.get("routeConfig", {})
+    complexity = route_metadata.get("complexity", {})
+    score = int(complexity.get("score") or 0)
+
+    if route_config.get("path") == "heavy_path" or score >= 62:
+        return 2
+
+    return 1
+
+
+def raise_safety_http_error(error: SafetyError) -> None:
+    status_code = 429
+
+    if error.error_type in {"file_page_limit"}:
+        status_code = 413
+    elif error.error_type in {"heavy_requires_queue"}:
+        status_code = 409
+    elif error.error_type in {"processing_timeout"}:
+        status_code = 504
+
+    raise HTTPException(
+        status_code=status_code,
+        detail=error.message,
+    )
+
+
+def enforce_endpoint_safety(
+    *,
+    user_uid: str,
+    client_ip: str,
+    endpoint: str,
+) -> None:
+    try:
+        safety_controls.enforce_endpoint_limit(
+            user_id=user_uid,
+            ip=client_ip,
+            endpoint=endpoint,
+        )
+    except SafetyError as error:
+        raise_safety_http_error(error)
+
+
+def enforce_heavy_safety(
+    *,
+    user_uid: str,
+    client_ip: str,
+    route_metadata: Dict[str, Any],
+    allow_queue: bool,
+) -> None:
+    try:
+        safety_controls.enforce_heavy_limit(
+            user_id=user_uid,
+            ip=client_ip,
+            route_metadata=route_metadata,
+            allow_queue=allow_queue,
+        )
+    except SafetyError as error:
+        raise_safety_http_error(error)
+
+
+def build_generate_response_payload(
+    *,
+    formatted: Dict[str, Any],
+    selected_mode: str,
+    selected_task: str,
+    usage_count: int,
+    cache_hit: bool = False,
+    cache_type: str = "",
+    route_metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    route_metadata = route_metadata or {}
+    route_config = route_metadata.get("routeConfig", {})
+    route = route_config.get("path", "")
+    model_tier = route_config.get("model_tier", "")
+    payload = {
+        "success": True,
+        "title": formatted.get("title", ""),
+        "markdown": formatted.get("markdown", ""),
+        "plainText": formatted.get("plainText") or formatted.get("plain_text", ""),
+        "sections": formatted.get("sections", []),
+        "sectionCount": formatted.get("sectionCount") or formatted.get("section_count", 0),
+        "mode": formatted.get("mode", selected_mode),
+        "task": formatted.get("task", selected_task),
+        "format": formatted.get("format", ""),
+        "provider": formatted.get("provider", ""),
+        "model": formatted.get("model", ""),
+        "route": formatted.get("route") or route,
+        "modelTier": formatted.get("modelTier") or model_tier,
+        "cached": cache_hit,
+        "usageCount": usage_count,
+        "dailyLimit": DAILY_FREE_LIMIT,
+        "cacheHit": cache_hit,
+        "cacheType": cache_type,
+        **route_metadata,
+    }
+    return schema_validator.validate_generation_response(payload)
+
+
+def generate_text_response_payload(
+    *,
+    user_uid: str,
+    cleaned_text: str,
+    selected_mode: str,
+    selected_task: str,
+    prepared: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    prepared = prepared or lumina_router.process_text_for_mode(
+        text=cleaned_text,
+        mode=selected_mode,
+        task=selected_task,
+    )
+
+    result = lumina_router.generate_prepared(
+        prepared=prepared,
+        mode=selected_mode,
+        task=selected_task,
+    )
+
+    formatted = result.get(
+        "formatted_output",
+        {},
+    )
+    generated_text = formatted.get(
+        "markdown",
+        "",
+    )
+
+    if not generated_text:
+        raise RuntimeError(extract_generation_error(result))
+
+    route_metadata = extract_route_metadata(result)
+    usage_count = check_and_increment_daily_usage(
+        user_uid,
+        weight=usage_weight_for_route(route_metadata),
+    )
+
+    return build_generate_response_payload(
+        formatted=formatted,
+        selected_mode=selected_mode,
+        selected_task=selected_task,
+        usage_count=usage_count,
+        route_metadata=route_metadata,
+    )
+
+
+def process_generation_job(
+    *,
+    job_id: str,
+    user_uid: str,
+    cleaned_text: str,
+    selected_mode: str,
+    selected_task: str,
+    cache_key: str,
+    request_id: str,
+) -> None:
+    started_at = time.perf_counter()
+    route_metadata: Dict[str, Any] = {}
+
+    try:
+        job_status_store.update(
+            job_id,
+            status="processing",
+        )
+
+        prepared = lumina_router.process_text_for_mode(
+            text=cleaned_text,
+            mode=selected_mode,
+            task=selected_task,
+        )
+        route_metadata = extract_route_metadata(prepared)
+
+        cached_payload = exact_cache.get(cache_key)
+
+        if cached_payload_matches_request(
+            cached_payload,
+            selected_mode=selected_mode,
+            selected_task=selected_task,
+        ):
+            cached_payload["cacheHit"] = True
+            cached_payload["cached"] = True
+            cached_payload["cacheType"] = "exact"
+            cached_payload["usageCount"] = get_daily_usage_count(user_uid)
+            cached_payload["dailyLimit"] = DAILY_FREE_LIMIT
+            cached_payload.update(route_metadata)
+            cached_payload = schema_validator.validate_generation_response(
+                cached_payload,
+            )
+            log_routing_event(
+                user_uid=user_uid,
+                request_id=request_id,
+                route_metadata=route_metadata,
+                started_at=started_at,
+                cache_hit=True,
+            )
+
+            job_status_store.update(
+                job_id,
+                status="completed",
+                result=cached_payload,
+                route_metadata=route_metadata,
+            )
+            log_routing_event(
+                user_uid=user_uid,
+                request_id=request_id,
+                route_metadata=route_metadata,
+                started_at=started_at,
+                cache_hit=True,
+            )
+            return
+
+        response_payload = generate_text_response_payload(
+            user_uid=user_uid,
+            cleaned_text=cleaned_text,
+            selected_mode=selected_mode,
+            selected_task=selected_task,
+            prepared=prepared,
+        )
+
+        exact_cache.set(cache_key, response_payload)
+        semantic_cache.save_embedding_cache(
+            text=cleaned_text,
+            task=selected_task,
+            mode=selected_mode,
+            response=response_payload,
+            metadata=route_metadata,
+        )
+
+        job_status_store.update(
+            job_id,
+            status="completed",
+            result=response_payload,
+            route_metadata=route_metadata,
+        )
+        log_routing_event(
+            user_uid=user_uid,
+            request_id=request_id,
+            route_metadata=route_metadata,
+            started_at=started_at,
+            cache_hit=False,
+        )
+    except HTTPException as exc:
+        job_status_store.update(
+            job_id,
+            status="failed",
+            error=str(exc.detail),
+        )
+        log_routing_event(
+            user_uid=user_uid,
+            request_id=request_id,
+            route_metadata=route_metadata,
+            started_at=started_at,
+            cache_hit=False,
+            error_type=str(exc.status_code),
+        )
+    except Exception as exc:
+        print("Generation job failed:", exc.__class__.__name__)
+        job_status_store.update(
+            job_id,
+            status="failed",
+            error="Failed to generate output. Please try again.",
+        )
+        log_routing_event(
+            user_uid=user_uid,
+            request_id=request_id,
+            route_metadata=route_metadata,
+            started_at=started_at,
+            cache_hit=False,
+            error_type=exc.__class__.__name__,
+        )
 
 
 def validate_format(format_value: str) -> str:
@@ -1433,6 +1845,7 @@ Output rules:
 
 def check_and_increment_daily_usage(
     user_uid: str,
+    weight: int = 1,
 ):
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -1452,7 +1865,7 @@ def check_and_increment_daily_usage(
             data = snapshot.to_dict() or {}
             current_count = data.get("count", 0)
 
-            if current_count >= DAILY_FREE_LIMIT:
+            if current_count + weight > DAILY_FREE_LIMIT:
                 raise HTTPException(
                     status_code=429,
                     detail=(
@@ -1464,31 +1877,45 @@ def check_and_increment_daily_usage(
             transaction.update(
                 usage_ref,
                 {
-                    "count": current_count + 1,
+                    "count": current_count + weight,
                     "updatedAt": firestore.SERVER_TIMESTAMP,
                 },
             )
 
-            return current_count + 1
+            return current_count + weight
 
         transaction.set(
             usage_ref,
             {
                 "uid": user_uid,
                 "date": today,
-                "count": 1,
+                "count": weight,
                 "limit": DAILY_FREE_LIMIT,
                 "createdAt": firestore.SERVER_TIMESTAMP,
                 "updatedAt": firestore.SERVER_TIMESTAMP,
             },
         )
 
-        return 1
+        return weight
 
     return update_usage(
         transaction,
         usage_ref,
     )
+
+
+def get_daily_usage_count(user_uid: str) -> int:
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    usage_ref = firestore_db.collection("usage").document(
+        f"{user_uid}_{today}"
+    )
+    snapshot = usage_ref.get()
+
+    if not snapshot.exists:
+        return 0
+
+    data = snapshot.to_dict() or {}
+    return int(data.get("count", 0) or 0)
 
 
 @app.post("/v2/generate")
@@ -1518,7 +1945,13 @@ def generate_v2(
         raise HTTPException(
             status_code=401,
             detail="Invalid Firebase user",
-        )
+    )
+    client_ip = safety_controls.client_ip(request)
+    enforce_endpoint_safety(
+        user_uid=user_uid,
+        client_ip=client_ip,
+        endpoint="v2_generate",
+    )
 
     print("V2 generation auth passed:", {"uid": user_uid})
 
@@ -1546,6 +1979,14 @@ def generate_v2(
         selected_mode,
         generate_request.task,
     )
+    started_at = time.perf_counter()
+    request_id = anonymized_request_id(
+        user_uid=user_uid,
+        selected_mode=selected_mode,
+        selected_task=selected_task,
+        cleaned_text=cleaned_text,
+    )
+    route_metadata: Dict[str, Any] = {}
 
     try:
         print(
@@ -1558,8 +1999,106 @@ def generate_v2(
             },
         )
 
-        result = lumina_router.generate_from_text(
+        prepared = lumina_router.process_text_for_mode(
             text=cleaned_text,
+            mode=selected_mode,
+            task=selected_task,
+        )
+        route_metadata = extract_route_metadata(prepared)
+        enforce_heavy_safety(
+            user_uid=user_uid,
+            client_ip=client_ip,
+            route_metadata=route_metadata,
+            allow_queue=False,
+        )
+        cache_key = request_hasher.cache_key(
+            user_id=user_uid,
+            task=selected_task,
+            mode=selected_mode,
+            text=cleaned_text,
+        )
+
+        cached_payload = exact_cache.get(cache_key)
+
+        if cached_payload_matches_request(
+            cached_payload,
+            selected_mode=selected_mode,
+            selected_task=selected_task,
+        ):
+            cached_payload["cacheHit"] = True
+            cached_payload["cached"] = True
+            cached_payload["cacheType"] = "exact"
+            cached_payload["usageCount"] = get_daily_usage_count(user_uid)
+            cached_payload["dailyLimit"] = DAILY_FREE_LIMIT
+            cached_payload.update(route_metadata)
+            cached_payload = schema_validator.validate_generation_response(
+                cached_payload,
+            )
+
+            print(
+                "V2 generation cache hit:",
+                {
+                    "uid": user_uid,
+                    "mode": selected_mode,
+                    "task": selected_task,
+                    "cache_type": "exact",
+                },
+            )
+            log_routing_event(
+                user_uid=user_uid,
+                request_id=request_id,
+                route_metadata=route_metadata,
+                started_at=started_at,
+                cache_hit=True,
+            )
+
+            return JSONResponse(content=cached_payload)
+
+        similar_payload = semantic_cache.find_similar_request(
+            text=cleaned_text,
+            task=selected_task,
+            mode=selected_mode,
+        )
+
+        if similar_payload:
+            similar_payload["cacheHit"] = True
+            similar_payload["cached"] = True
+            similar_payload["cacheType"] = "semantic"
+            similar_payload["usageCount"] = get_daily_usage_count(user_uid)
+            similar_payload["dailyLimit"] = DAILY_FREE_LIMIT
+            similar_payload.update(route_metadata)
+            similar_payload = schema_validator.validate_generation_response(
+                similar_payload,
+            )
+            log_routing_event(
+                user_uid=user_uid,
+                request_id=request_id,
+                route_metadata=route_metadata,
+                started_at=started_at,
+                cache_hit=True,
+            )
+
+            print(
+                "V2 generation cache hit:",
+                {
+                    "uid": user_uid,
+                    "mode": selected_mode,
+                    "task": selected_task,
+                    "cache_type": "semantic",
+                },
+            )
+            log_routing_event(
+                user_uid=user_uid,
+                request_id=request_id,
+                route_metadata=route_metadata,
+                started_at=started_at,
+                cache_hit=True,
+            )
+
+            return JSONResponse(content=similar_payload)
+
+        result = lumina_router.generate_prepared(
+            prepared=prepared,
             mode=selected_mode,
             task=selected_task,
         )
@@ -1585,6 +2124,7 @@ def generate_v2(
 
         usage_count = check_and_increment_daily_usage(
             user_uid,
+            weight=usage_weight_for_route(route_metadata),
         )
 
         print(
@@ -1597,34 +2137,460 @@ def generate_v2(
             },
         )
 
+        response_payload = build_generate_response_payload(
+            formatted=formatted,
+            selected_mode=selected_mode,
+            selected_task=selected_task,
+            usage_count=usage_count,
+            route_metadata=extract_route_metadata(result),
+        )
+
+        exact_cache.set(cache_key, response_payload)
+        semantic_cache.save_embedding_cache(
+            text=cleaned_text,
+            task=selected_task,
+            mode=selected_mode,
+            response=response_payload,
+            metadata=route_metadata,
+        )
+        log_routing_event(
+            user_uid=user_uid,
+            request_id=request_id,
+            route_metadata=extract_route_metadata(result),
+            started_at=started_at,
+            cache_hit=False,
+        )
+
         return JSONResponse(
-            content={
-                "success": True,
-                "title": formatted.get("title", ""),
-                "markdown": formatted.get("markdown", ""),
-                "plainText": formatted.get("plain_text", ""),
-                "sections": formatted.get("sections", []),
-                "sectionCount": formatted.get("section_count", 0),
-                "mode": formatted.get("mode", selected_mode),
-                "task": formatted.get("task", selected_task),
-                "format": formatted.get("format", ""),
-                "provider": formatted.get("provider", ""),
-                "model": formatted.get("model", ""),
-                "usageCount": usage_count,
-                "dailyLimit": DAILY_FREE_LIMIT,
-            }
+            content=response_payload
         )
 
     except HTTPException:
+        log_routing_event(
+            user_uid=user_uid,
+            request_id=request_id,
+            route_metadata=route_metadata,
+            started_at=started_at,
+            cache_hit=False,
+            error_type="http_exception",
+        )
         raise
+
+    except SafetyError as e:
+        log_routing_event(
+            user_uid=user_uid,
+            request_id=request_id,
+            route_metadata=route_metadata,
+            started_at=started_at,
+            cache_hit=False,
+            error_type=e.error_type,
+        )
+        raise_safety_http_error(e)
 
     except Exception as e:
         print("V2 generation error:", str(e))
+        log_routing_event(
+            user_uid=user_uid,
+            request_id=request_id,
+            route_metadata=route_metadata,
+            started_at=started_at,
+            cache_hit=False,
+            error_type=e.__class__.__name__,
+        )
 
         raise HTTPException(
             status_code=500,
             detail="Failed to generate output. Please try again.",
         )
+
+
+@app.post("/v2/jobs/generate")
+@limiter.limit("20/minute")
+def create_generation_job(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    generate_request: GenerateRequest,
+    authorization: str = Header(None),
+):
+    decoded_user = verify_firebase_user(
+        authorization,
+    )
+    user_uid = decoded_user.get("uid")
+
+    if not user_uid:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Firebase user",
+        )
+    client_ip = safety_controls.client_ip(request)
+    enforce_endpoint_safety(
+        user_uid=user_uid,
+        client_ip=client_ip,
+        endpoint="v2_jobs_generate",
+    )
+
+    cleaned_text = clean_input_text(
+        generate_request.text,
+    )
+
+    if len(cleaned_text) < 5:
+        raise HTTPException(
+            status_code=400,
+            detail="Input text is too short",
+        )
+
+    if len(cleaned_text) > MAX_INPUT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail="Input text is too large",
+        )
+
+    selected_mode = validate_mode(
+        generate_request.mode,
+    )
+    selected_task = validate_task(
+        selected_mode,
+        generate_request.task,
+    )
+    started_at = time.perf_counter()
+    request_id = anonymized_request_id(
+        user_uid=user_uid,
+        selected_mode=selected_mode,
+        selected_task=selected_task,
+        cleaned_text=cleaned_text,
+    )
+    route_metadata: Dict[str, Any] = {}
+
+    try:
+        prepared = lumina_router.process_text_for_mode(
+            text=cleaned_text,
+            mode=selected_mode,
+            task=selected_task,
+        )
+        route_metadata = extract_route_metadata(prepared)
+        route_config = route_metadata.get("routeConfig", {})
+        enforce_heavy_safety(
+            user_uid=user_uid,
+            client_ip=client_ip,
+            route_metadata=route_metadata,
+            allow_queue=True,
+        )
+        cache_key = request_hasher.cache_key(
+            user_id=user_uid,
+            task=selected_task,
+            mode=selected_mode,
+            text=cleaned_text,
+        )
+
+        cached_payload = exact_cache.get(cache_key)
+
+        if cached_payload_matches_request(
+            cached_payload,
+            selected_mode=selected_mode,
+            selected_task=selected_task,
+        ):
+            cached_payload["cacheHit"] = True
+            cached_payload["cached"] = True
+            cached_payload["cacheType"] = "exact"
+            cached_payload["usageCount"] = get_daily_usage_count(user_uid)
+            cached_payload["dailyLimit"] = DAILY_FREE_LIMIT
+            cached_payload.update(route_metadata)
+            cached_payload = schema_validator.validate_generation_response(
+                cached_payload,
+            )
+
+            return JSONResponse(
+                content={
+                    "success": True,
+                    "queued": False,
+                    "status": "completed",
+                    "cacheHit": True,
+                    "cacheType": "exact",
+                    "result": cached_payload,
+                    **route_metadata,
+                }
+            )
+
+        similar_payload = semantic_cache.find_similar_request(
+            text=cleaned_text,
+            task=selected_task,
+            mode=selected_mode,
+        )
+
+        if similar_payload:
+            similar_payload["cacheHit"] = True
+            similar_payload["cached"] = True
+            similar_payload["cacheType"] = "semantic"
+            similar_payload["usageCount"] = get_daily_usage_count(user_uid)
+            similar_payload["dailyLimit"] = DAILY_FREE_LIMIT
+            similar_payload.update(route_metadata)
+            similar_payload = schema_validator.validate_generation_response(
+                similar_payload,
+            )
+
+            return JSONResponse(
+                content={
+                    "success": True,
+                    "queued": False,
+                    "status": "completed",
+                    "cacheHit": True,
+                    "cacheType": "semantic",
+                    "result": similar_payload,
+                    **route_metadata,
+                }
+            )
+
+        if route_config.get("queue_required") is True:
+            try:
+                job = job_status_store.create_job(
+                    user_id=user_uid,
+                    route_metadata=route_metadata,
+                )
+                queue_mode = task_queue.enqueue(
+                    background_tasks=background_tasks,
+                    job_id=job["jobId"],
+                    handler=process_generation_job,
+                    payload={
+                        "user_uid": user_uid,
+                        "cleaned_text": cleaned_text,
+                        "selected_mode": selected_mode,
+                        "selected_task": selected_task,
+                        "cache_key": cache_key,
+                        "request_id": request_id,
+                    },
+                )
+
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "success": True,
+                        "queued": True,
+                        "jobId": job["jobId"],
+                        "status": "pending",
+                        "statusUrl": f"/v2/jobs/{job['jobId']}",
+                        "queueMode": queue_mode,
+                        **route_metadata,
+                    },
+                )
+            except Exception as exc:
+                print("Background job unavailable:", exc.__class__.__name__)
+                response_payload = generate_text_response_payload(
+                    user_uid=user_uid,
+                    cleaned_text=cleaned_text,
+                    selected_mode=selected_mode,
+                    selected_task=selected_task,
+                    prepared=prepared,
+                )
+                exact_cache.set(cache_key, response_payload)
+                semantic_cache.save_embedding_cache(
+                    text=cleaned_text,
+                    task=selected_task,
+                    mode=selected_mode,
+                    response=response_payload,
+                    metadata=route_metadata,
+                )
+                log_routing_event(
+                    user_uid=user_uid,
+                    request_id=request_id,
+                    route_metadata=route_metadata,
+                    started_at=started_at,
+                    cache_hit=False,
+                    error_type="job_fallback_inline",
+                )
+
+                return JSONResponse(
+                    content={
+                        "success": True,
+                        "queued": False,
+                        "status": "completed",
+                        "queueMode": "inline_fallback",
+                        "result": response_payload,
+                        **route_metadata,
+                    }
+                )
+
+        response_payload = generate_text_response_payload(
+            user_uid=user_uid,
+            cleaned_text=cleaned_text,
+            selected_mode=selected_mode,
+            selected_task=selected_task,
+            prepared=prepared,
+        )
+        exact_cache.set(cache_key, response_payload)
+        semantic_cache.save_embedding_cache(
+            text=cleaned_text,
+            task=selected_task,
+            mode=selected_mode,
+            response=response_payload,
+            metadata=route_metadata,
+        )
+        log_routing_event(
+            user_uid=user_uid,
+            request_id=request_id,
+            route_metadata=route_metadata,
+            started_at=started_at,
+            cache_hit=False,
+        )
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "queued": False,
+                "status": "completed",
+                "result": response_payload,
+                **route_metadata,
+            }
+        )
+    except HTTPException:
+        log_routing_event(
+            user_uid=user_uid,
+            request_id=request_id,
+            route_metadata=route_metadata,
+            started_at=started_at,
+            cache_hit=False,
+            error_type="http_exception",
+        )
+        raise
+    except SafetyError as exc:
+        log_routing_event(
+            user_uid=user_uid,
+            request_id=request_id,
+            route_metadata=route_metadata,
+            started_at=started_at,
+            cache_hit=False,
+            error_type=exc.error_type,
+        )
+        raise_safety_http_error(exc)
+
+    except Exception as exc:
+        print("V2 job creation error:", exc.__class__.__name__)
+        log_routing_event(
+            user_uid=user_uid,
+            request_id=request_id,
+            route_metadata=route_metadata,
+            started_at=started_at,
+            cache_hit=False,
+            error_type=exc.__class__.__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create generation job. Please try again.",
+        )
+
+
+@app.get("/v2/jobs/{job_id}")
+@limiter.limit("60/minute")
+def get_generation_job(
+    request: Request,
+    job_id: str,
+    authorization: str = Header(None),
+):
+    decoded_user = verify_firebase_user(
+        authorization,
+    )
+    user_uid = decoded_user.get("uid")
+
+    if not user_uid:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Firebase user",
+        )
+
+    job = job_status_store.get(job_id)
+
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found",
+        )
+
+    if job.get("userId") != user_uid:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to view this job",
+        )
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "jobId": job.get("jobId"),
+            "status": job.get("status"),
+            "result": job.get("result"),
+            "error": job.get("error", ""),
+            "routeConfig": job.get("routeConfig", {}),
+            "complexity": job.get("complexity", {}),
+            "createdAt": job.get("createdAt"),
+            "updatedAt": job.get("updatedAt"),
+        }
+    )
+
+
+@app.post("/v2/feedback")
+@limiter.limit("30/minute")
+def submit_generation_feedback(
+    request: Request,
+    feedback_request: FeedbackRequest,
+    authorization: str = Header(None),
+):
+    decoded_user = verify_firebase_user(
+        authorization,
+    )
+    user_uid = decoded_user.get("uid")
+
+    if not user_uid:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Firebase user",
+        )
+
+    client_ip = safety_controls.client_ip(request)
+    enforce_endpoint_safety(
+        user_uid=user_uid,
+        client_ip=client_ip,
+        endpoint="v2_feedback",
+    )
+
+    allowed_tags = {
+        "too short",
+        "too long",
+        "missing points",
+        "bad formatting",
+        "OCR mistake",
+        "very helpful",
+    }
+    clean_tags = [
+        tag
+        for tag in feedback_request.tags[:8]
+        if tag in allowed_tags
+    ]
+
+    try:
+        firestore_db.collection("feedback").add(
+            {
+                "uid": user_uid,
+                "title": feedback_request.title.strip()[:160],
+                "mode": validate_mode(feedback_request.mode),
+                "task": feedback_request.task.strip()[:50],
+                "rating": feedback_request.rating,
+                "tags": clean_tags,
+                "route": feedback_request.route.strip()[:40],
+                "modelTier": feedback_request.modelTier.strip()[:40],
+                "source": "flutter_generation_feedback",
+                "createdAt": firestore.SERVER_TIMESTAMP,
+            }
+        )
+    except Exception as exc:
+        print("Feedback save error:", str(exc))
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to save feedback. Please try again.",
+        )
+
+    return JSONResponse(
+        content={
+            "success": True,
+        }
+    )
 
 
 @app.post("/v2/generate-file")
@@ -1648,8 +2614,18 @@ async def generate_file_v2(
             detail="Invalid Firebase user",
         )
 
+    client_ip = safety_controls.client_ip(request)
+    enforce_endpoint_safety(
+        user_uid=user_uid,
+        client_ip=client_ip,
+        endpoint="v2_generate_file",
+    )
+
     selected_mode = validate_mode(mode)
     selected_task = validate_task(selected_mode, task)
+    started_at = time.perf_counter()
+    request_id = ""
+    route_metadata: Dict[str, Any] = {}
 
     filename = file.filename or "upload"
     extension = os.path.splitext(filename)[1].lower()
@@ -1703,10 +2679,35 @@ async def generate_file_v2(
                     detail="Uploaded file is empty",
                 )
 
-        result = lumina_router.generate_from_file(
-            file_path=temp_path,
-            mode=selected_mode,
-            task=selected_task,
+        request_id = anonymized_file_request_id(temp_path)
+
+        if extension == ".pdf":
+            try:
+                safety_controls.validate_pdf_pages(
+                    temp_path,
+                    user_plan="free",
+                )
+            except SafetyError as error:
+                safety_controls.register_violation(
+                    user_id=user_uid,
+                    ip=client_ip,
+                )
+                raise_safety_http_error(error)
+
+        result = safety_controls.run_with_timeout(
+            lambda: lumina_router.generate_from_file(
+                file_path=temp_path,
+                mode=selected_mode,
+                task=selected_task,
+            ),
+            timeout_seconds=safety_controls.ocr_timeout_seconds,
+        )
+        route_metadata = extract_route_metadata(result)
+        enforce_heavy_safety(
+            user_uid=user_uid,
+            client_ip=client_ip,
+            route_metadata=route_metadata,
+            allow_queue=True,
         )
 
         formatted = result.get("formatted_output", {})
@@ -1720,26 +2721,24 @@ async def generate_file_v2(
                 detail=error_detail,
             )
 
-        usage_count = check_and_increment_daily_usage(user_uid)
+        usage_count = check_and_increment_daily_usage(
+            user_uid,
+            weight=usage_weight_for_route(route_metadata),
+        )
         pipeline_output = result.get("pipeline_output", {})
         extraction = pipeline_output.get("extraction", {})
         structure = pipeline_output.get("structure", {})
-
-        return JSONResponse(
-            content={
-                "success": True,
-                "title": formatted.get("title", ""),
-                "markdown": formatted.get("markdown", ""),
-                "plainText": formatted.get("plain_text", ""),
-                "sections": formatted.get("sections", []),
-                "sectionCount": formatted.get("section_count", 0),
-                "mode": formatted.get("mode", selected_mode),
-                "task": formatted.get("task", selected_task),
-                "format": formatted.get("format", ""),
-                "provider": formatted.get("provider", ""),
-                "model": formatted.get("model", ""),
-                "usageCount": usage_count,
-                "dailyLimit": DAILY_FREE_LIMIT,
+        response_payload = build_generate_response_payload(
+            formatted=formatted,
+            selected_mode=selected_mode,
+            selected_task=selected_task,
+            usage_count=usage_count,
+            cache_hit=False,
+            cache_type="",
+            route_metadata=route_metadata,
+        )
+        response_payload.update(
+            {
                 "extractionSource": extraction.get("source", ""),
                 "extractionConfidence": extraction.get("confidence", 0),
                 "extractionQuality": extraction.get("quality", {}),
@@ -1754,12 +2753,53 @@ async def generate_file_v2(
                 "parserType": structure.get("parser_type", ""),
             }
         )
+        log_routing_event(
+            user_uid=user_uid,
+            request_id=request_id,
+            route_metadata=route_metadata,
+            started_at=started_at,
+            cache_hit=False,
+        )
+
+        return JSONResponse(
+            content=response_payload
+        )
 
     except HTTPException:
+        if request_id:
+            log_routing_event(
+                user_uid=user_uid,
+                request_id=request_id,
+                route_metadata=route_metadata,
+                started_at=started_at,
+                cache_hit=False,
+                error_type="http_exception",
+            )
         raise
 
+    except SafetyError as e:
+        if request_id:
+            log_routing_event(
+                user_uid=user_uid,
+                request_id=request_id,
+                route_metadata=route_metadata,
+                started_at=started_at,
+                cache_hit=False,
+                error_type=e.error_type,
+            )
+        raise_safety_http_error(e)
+
     except Exception as e:
-        print("V2 file generation error:", str(e))
+        print("V2 file generation error:", e.__class__.__name__)
+        if request_id:
+            log_routing_event(
+                user_uid=user_uid,
+                request_id=request_id,
+                route_metadata=route_metadata,
+                started_at=started_at,
+                cache_hit=False,
+                error_type=e.__class__.__name__,
+            )
 
         raise HTTPException(
             status_code=500,
@@ -1799,6 +2839,13 @@ def summarize_notes(
             status_code=401,
             detail="Invalid Firebase user",
         )
+
+    client_ip = safety_controls.client_ip(request)
+    enforce_endpoint_safety(
+        user_uid=user_uid,
+        client_ip=client_ip,
+        endpoint="legacy_summarize",
+    )
 
     cleaned_text = clean_input_text(
         note_request.text,
@@ -1850,6 +2897,13 @@ def summarize_notes(
             mode=selected_mode,
             task=selected_task,
         )
+        route_metadata = extract_route_metadata(result)
+        enforce_heavy_safety(
+            user_uid=user_uid,
+            client_ip=client_ip,
+            route_metadata=route_metadata,
+            allow_queue=False,
+        )
 
         formatted = result.get(
             "formatted_output",
@@ -1872,6 +2926,7 @@ def summarize_notes(
 
         usage_count = check_and_increment_daily_usage(
             user_uid,
+            weight=usage_weight_for_route(route_metadata),
         )
 
         return JSONResponse(
@@ -1890,7 +2945,7 @@ def summarize_notes(
         raise
 
     except Exception as e:
-        print("Legacy summarize via V2 pipeline error:", str(e))
+        print("Legacy summarize via V2 pipeline error:", e.__class__.__name__)
 
         raise HTTPException(
             status_code=500,

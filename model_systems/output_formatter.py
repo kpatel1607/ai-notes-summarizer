@@ -1,8 +1,30 @@
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 
 class OutputFormatter:
+
+    TASK_DEFAULT_TITLES = {
+        "important_notes": "Important Notes",
+        "revision_sheet": "Revision Sheet",
+        "flashcards": "Flashcards",
+        "mcqs": "Multiple-Choice Questions",
+        "qa_generation": "Questions and Answers",
+        "answer_questions": "Answers",
+        "beginner_explanation": "Beginner Explanation",
+        "executive_summary": "Executive Summary",
+        "main_points": "Main Points",
+        "meeting_minutes": "Meeting Minutes",
+        "action_items": "Action Items",
+        "structured_report": "Structured Report",
+        "table_format": "Structured Table",
+        "email_draft": "Email Draft",
+        "short_summary": "Summary",
+        "bullet_summary": "Bullet Summary",
+        "key_points": "Key Points",
+        "simplify": "Simplified Text",
+        "clean_text": "Cleaned Text",
+    }
 
     def format(
         self,
@@ -11,9 +33,13 @@ class OutputFormatter:
         task: str = "short_summary",
         model: str = "",
         provider: str = "",
-        structure: Dict[str, Any] | None = None,
+        structure: Optional[Dict[str, Any]] = None,
         source_text: str = "",
+        route_config: Optional[Dict[str, Any]] = None,
+        cached: bool = False,
     ) -> Dict[str, Any]:
+        structure = structure or {}
+        route_config = route_config or {}
 
         cleaned_markdown = self._clean_markdown(
             processed_text,
@@ -23,25 +49,47 @@ class OutputFormatter:
             cleaned_markdown,
             task,
             source_text=source_text,
+            structure=structure,
         )
 
         if task == "table_format":
             cleaned_markdown = self._ensure_table_output(
                 cleaned_markdown,
-                structure or {},
+                structure,
             )
+
+        tables = self._extract_markdown_tables(
+            cleaned_markdown,
+        )
 
         sections = self._extract_sections(
             cleaned_markdown,
         )
 
-        title = self._extract_title(
-            cleaned_markdown,
-            sections,
+        title = self._resolve_title(
+            markdown=cleaned_markdown,
+            sections=sections,
+            task=task,
+            structure=structure,
         )
 
         plain_text = self._markdown_to_plain_text(
             cleaned_markdown,
+        )
+
+        route = str(
+            route_config.get(
+                "path",
+                "",
+            )
+            or ""
+        )
+        model_tier = str(
+            route_config.get(
+                "model_tier",
+                "",
+            )
+            or ""
         )
 
         return {
@@ -51,57 +99,166 @@ class OutputFormatter:
             "format": self._detect_format(task),
             "markdown": cleaned_markdown,
             "plain_text": plain_text,
+            "plainText": plain_text,
             "sections": sections,
             "section_count": len(sections),
+            "sectionCount": len(sections),
+            "tables": tables,
+            "table_count": len(tables),
+            "tableCount": len(tables),
             "model": model,
             "provider": provider,
+            "route": route,
+            "modelTier": model_tier,
+            "cached": cached,
+            "metadata": {
+                "route": route,
+                "modelTier": model_tier,
+                "cached": cached,
+                "sourceTitleUsed": bool(
+                    str(
+                        structure.get(
+                            "title",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+                ),
+                "modelFormattingRequired": (
+                    self.requires_model_based_formatting(
+                        cleaned_markdown,
+                        sections,
+                        mode=mode,
+                        task=task,
+                    )
+                ),
+            },
         }
+
+    def requires_model_based_formatting(
+        self,
+        markdown: str,
+        sections: List[Dict[str, Any]],
+        mode: str = "general",
+        task: str = "short_summary",
+    ) -> bool:
+        cleaned = (markdown or "").strip()
+
+        if not cleaned:
+            return True
+
+        if task == "table_format":
+            return not self._has_valid_markdown_table(
+                cleaned,
+            )
+
+        if task == "email_draft":
+            return not bool(
+                re.search(
+                    r"^subject\s*:",
+                    cleaned,
+                    flags=re.IGNORECASE
+                    | re.MULTILINE,
+                )
+            )
+
+        if task in {
+            "action_items",
+            "meeting_minutes",
+            "structured_report",
+            "executive_summary",
+            "beginner_explanation",
+            "revision_sheet",
+        }:
+            if sections:
+                return False
+
+            if self._has_valid_markdown_table(
+                cleaned,
+            ):
+                return False
+
+            return len(
+                cleaned.split()
+            ) > 180
+
+        return False
 
     def _apply_task_shape(
         self,
         text: str,
         task: str,
         source_text: str = "",
+        structure: Optional[
+            Dict[str, Any]
+        ] = None,
     ) -> str:
         cleaned = text.strip()
+        structure = structure or {}
 
         if task == "email_draft":
-            return self._repair_email_output(cleaned, source_text)
-
-        if task == "action_items" and not self._has_valid_markdown_table(cleaned):
-            return self._action_items_to_table(cleaned)
-
-        if task == "meeting_minutes":
-            return self._ensure_named_sections(
+            return self._repair_email_output(
                 cleaned,
-                ["Agenda", "Discussion", "Decisions", "Action Items"],
+                source_text,
             )
 
-        if task == "structured_report":
-            return self._ensure_named_sections(
+        if (
+            task == "action_items"
+            and not self._has_valid_markdown_table(
                 cleaned,
-                ["Overview", "Findings", "Details", "Risks or Gaps", "Conclusion"],
+            )
+        ):
+            return self._action_items_to_table(
+                cleaned,
+                structure=structure,
             )
 
-        if task == "executive_summary":
-            return self._ensure_named_sections(
+        if task in {
+            "meeting_minutes",
+            "structured_report",
+            "executive_summary",
+            "beginner_explanation",
+            "revision_sheet",
+        }:
+            return self._normalize_existing_headings(
                 cleaned,
-                ["Context", "Key Points", "Implications", "Next Steps"],
-            )
-
-        if task == "beginner_explanation":
-            return self._ensure_named_sections(
-                cleaned,
-                ["Big Idea", "Simple Explanation", "Key Terms", "Quick Recap"],
-            )
-
-        if task == "revision_sheet":
-            return self._ensure_named_sections(
-                cleaned,
-                ["Must Know", "Definitions", "Quick Facts", "Final Review"],
             )
 
         return cleaned
+
+    def _normalize_existing_headings(
+        self,
+        text: str,
+    ) -> str:
+        lines: List[str] = []
+
+        for raw_line in text.splitlines():
+            line = raw_line.rstrip()
+            stripped = line.strip()
+
+            if not stripped:
+                lines.append("")
+                continue
+
+            if (
+                stripped.endswith(":")
+                and len(
+                    stripped.split()
+                )
+                <= 10
+                and not stripped.lower().startswith(
+                    ("http://", "https://")
+                )
+            ):
+                lines.append(
+                    f"## {stripped[:-1].strip()}"
+                )
+            else:
+                lines.append(line)
+
+        return "\n".join(
+            lines
+        ).strip()
 
     def _repair_email_output(
         self,
@@ -214,43 +371,18 @@ class OutputFormatter:
     def _action_items_to_table(
         self,
         text: str,
+        structure: Optional[
+            Dict[str, Any]
+        ] = None,
     ) -> str:
-        lines = [
-            re.sub(r"^[-*\d.]+\s*", "", line).strip()
-            for line in text.splitlines()
-            if line.strip()
-        ]
-
-        rows = [["Action", "Owner", "Deadline", "Priority", "Notes"]]
-
-        for line in lines[:20]:
-            if not line:
-                continue
-
-            rows.append(
-                [
-                    line,
-                    "Not specified",
-                    "Not specified",
-                    "Not specified",
-                    "Not specified",
-                ]
-            )
-
-        return self._rows_to_markdown_table(rows) or text
-
-    def _ensure_named_sections(
-        self,
-        text: str,
-        sections: List[str],
-    ) -> str:
-        lower = text.lower()
-
-        if sum(1 for section in sections if section.lower() in lower) >= 2:
-            return text
+        structure = structure or {}
 
         lines = [
-            line.strip()
+            re.sub(
+                r"^[-*\d.)]+\s*",
+                "",
+                line,
+            ).strip()
             for line in text.splitlines()
             if line.strip()
         ]
@@ -258,14 +390,56 @@ class OutputFormatter:
         if not lines:
             return text
 
-        return "\n\n".join(
+        contact_lines = structure.get(
+            "contact_lines",
+            [],
+        ) or []
+
+        default_contact = (
+            str(
+                contact_lines[0]
+            ).strip()
+            if contact_lines
+            else ""
+        )
+
+        rows: List[List[str]] = [
             [
-                f"{sections[0]}\n{lines[0]}",
-                *[
-                    f"{section}\nNot clearly available in the provided content."
-                    for section in sections[1:]
-                ],
+                "Action",
+                "Responsible Party or Actor",
+                "Deadline or Trigger",
+                "Contact or Reference",
+                "Notes",
             ]
+        ]
+
+        for line in lines[:30]:
+            rows.append(
+                [
+                    line,
+                    "",
+                    "",
+                    default_contact,
+                    "",
+                ]
+            )
+
+        return (
+            self._rows_to_markdown_table(
+                rows,
+                fill_missing=False,
+            )
+            or text
+        )
+
+    def _ensure_named_sections(
+        self,
+        text: str,
+        sections: List[str],
+    ) -> str:
+        # Compatibility helper. Never invent unavailable sections.
+        return self._normalize_existing_headings(
+            text,
         )
 
     def _ensure_table_output(
@@ -273,8 +447,12 @@ class OutputFormatter:
         text: str,
         structure: Dict[str, Any],
     ) -> str:
-        if self._has_valid_markdown_table(text):
-            return self._remove_blank_table_rows(text)
+        if self._has_valid_markdown_table(
+            text,
+        ):
+            return self._remove_blank_table_rows(
+                text,
+            )
 
         lines = [
             line.strip()
@@ -282,90 +460,177 @@ class OutputFormatter:
             if line.strip()
         ]
 
-        parsed_rows = self._rows_from_text_patterns(lines)
+        parsed_rows = self._rows_from_text_patterns(
+            lines,
+        )
 
         if parsed_rows:
-            markdown = self._rows_to_markdown_table(parsed_rows)
+            markdown = self._rows_to_markdown_table(
+                parsed_rows,
+                fill_missing=False,
+            )
 
             if markdown:
                 return markdown
 
-        tables = structure.get("tables", [])
+        for table in structure.get(
+            "tables",
+            [],
+        ) or []:
+            rows = table.get(
+                "rows",
+                [],
+            )
 
-        for table in tables:
-            rows = table.get("rows", [])
-            markdown = self._rows_to_markdown_table(rows)
+            markdown = self._rows_to_markdown_table(
+                rows,
+                fill_missing=False,
+            )
 
             if markdown:
                 return markdown
 
-        key_values = structure.get("key_value_fields", [])
+        key_values = structure.get(
+            "key_value_fields",
+            [],
+        ) or []
 
         if key_values:
-            rows = [["Field", "Value"]]
+            rows = [
+                [
+                    "Field",
+                    "Details",
+                ]
+            ]
 
             for item in key_values:
+                key = str(
+                    item.get(
+                        "key",
+                        "",
+                    )
+                    or ""
+                ).strip()
+                value = str(
+                    item.get(
+                        "value",
+                        "",
+                    )
+                    or ""
+                ).strip()
+
+                if key and value:
+                    rows.append(
+                        [
+                            key,
+                            value,
+                        ]
+                    )
+
+            markdown = self._rows_to_markdown_table(
+                rows,
+                fill_missing=False,
+            )
+
+            if markdown:
+                return markdown
+
+        rows = [
+            [
+                "Item",
+                "Details",
+            ]
+        ]
+
+        for index, line in enumerate(
+            lines[:30],
+            start=1,
+        ):
+            cleaned = re.sub(
+                r"^[-*\d.)]+\s*",
+                "",
+                line,
+            ).strip()
+
+            if cleaned:
                 rows.append(
                     [
-                        item.get("key", "Field"),
-                        item.get("value", "Not specified"),
+                        str(index),
+                        cleaned,
                     ]
                 )
 
-            markdown = self._rows_to_markdown_table(rows)
-
-            if markdown:
-                return markdown
-
-        rows = [["Item", "Details"]]
-
-        for index, line in enumerate(lines[:20], start=1):
-            line = re.sub(r"^[-*\d.]+\s*", "", line).strip()
-
-            if line:
-                rows.append([str(index), line])
-
-        markdown = self._rows_to_markdown_table(rows)
-
-        return markdown or text
+        return (
+            self._rows_to_markdown_table(
+                rows,
+                fill_missing=False,
+            )
+            or text
+        )
 
     def _rows_from_text_patterns(
         self,
         lines: List[str],
     ) -> List[List[str]]:
-        key_value_rows = [["Field", "Value"]]
+        key_value_rows = [
+            [
+                "Field",
+                "Details",
+            ]
+        ]
 
         for line in lines:
-            cleaned = re.sub(r"^[-*\d.]+\s*", "", line).strip()
+            cleaned = re.sub(
+                r"^[-*\d.)]+\s*",
+                "",
+                line,
+            ).strip()
 
-            if ":" in cleaned:
-                key, value = cleaned.split(":", 1)
+            match = re.match(
+                r"^([^:]{1,60})\s*::?\s*(.+)$",
+                cleaned,
+            )
 
-                if key.strip() and value.strip():
+            if match:
+                key = match.group(
+                    1
+                ).strip()
+                value = match.group(
+                    2
+                ).strip()
+
+                if key and value:
                     key_value_rows.append(
                         [
-                            key.strip(),
-                            value.strip(),
+                            key,
+                            value,
                         ]
                     )
 
-        if len(key_value_rows) >= 3:
+        if len(
+            key_value_rows
+        ) >= 3:
             return key_value_rows
 
-        column_rows = []
+        column_rows: List[List[str]] = []
 
         for line in lines:
-            if "|" in line:
-                cells = [
-                    cell.strip()
-                    for cell in line.strip("|").split("|")
-                    if cell.strip()
-                ]
+            if (
+                line.startswith("|")
+                and line.endswith("|")
+            ):
+                cells = self._split_markdown_table_row(
+                    line,
+                )
 
-                if len(cells) >= 2:
-                    column_rows.append(cells)
+                if cells:
+                    column_rows.append(
+                        cells
+                    )
 
-        if len(column_rows) >= 2:
+        if len(
+            column_rows
+        ) >= 2:
             return column_rows
 
         return []
@@ -374,79 +639,336 @@ class OutputFormatter:
         self,
         text: str,
     ) -> bool:
-        lines = [
-            line.strip()
-            for line in text.splitlines()
-            if line.strip()
-        ]
+        tables = self._extract_markdown_tables(
+            text,
+        )
 
-        table_lines = [
-            line
-            for line in lines
-            if line.startswith("|") and line.endswith("|")
-        ]
-
-        if len(table_lines) < 3:
-            return False
-
-        meaningful_rows = [
-            line
-            for line in table_lines
-            if not re.fullmatch(r"\|[\s\-:|]+\|", line)
-            and any(cell.strip() for cell in line.strip("|").split("|"))
-        ]
-
-        return len(meaningful_rows) >= 2
+        return bool(
+            tables
+            and any(
+                table.get(
+                    "rows",
+                )
+                for table in tables
+            )
+        )
 
     def _remove_blank_table_rows(
         self,
         text: str,
     ) -> str:
-        cleaned_lines = []
+        cleaned_lines: List[str] = []
 
         for line in text.splitlines():
-            if line.strip().startswith("|"):
-                cells = [
-                    cell.strip()
-                    for cell in line.strip().strip("|").split("|")
-                ]
+            stripped = line.strip()
 
-                if not any(cells):
+            if (
+                stripped.startswith("|")
+                and stripped.endswith("|")
+            ):
+                cells = self._split_markdown_table_row(
+                    stripped,
+                )
+
+                if not any(
+                    cell.strip()
+                    for cell in cells
+                ):
                     continue
 
             cleaned_lines.append(line)
 
-        return "\n".join(cleaned_lines).strip()
+        return "\n".join(
+            cleaned_lines
+        ).strip()
 
     def _rows_to_markdown_table(
         self,
         rows: List[List[str]],
+        *,
+        fill_missing: bool = False,
     ) -> str:
-        if not rows or len(rows) < 2:
+        if (
+            not rows
+            or len(rows) < 2
+        ):
             return ""
 
-        width = max(len(row) for row in rows)
-        normalized_rows = [
-            [str(cell or "Not specified").strip() for cell in row]
-            + ["Not specified"] * (width - len(row))
+        width = max(
+            len(row)
             for row in rows
-        ]
+        )
+
+        normalized_rows: List[
+            List[str]
+        ] = []
+
+        for row in rows:
+            normalized = [
+                self._escape_table_cell(
+                    str(
+                        cell
+                        if cell is not None
+                        else ""
+                    ).strip()
+                )
+                for cell in row
+            ]
+
+            filler = (
+                "Not specified"
+                if fill_missing
+                else ""
+            )
+
+            normalized += [
+                filler
+            ] * (
+                width
+                - len(normalized)
+            )
+
+            normalized_rows.append(
+                normalized
+            )
 
         header = normalized_rows[0]
-        separator = ["---"] * width
-        body = normalized_rows[1:]
+        separator = [
+            "---"
+        ] * width
+
+        body = [
+            row
+            for row in normalized_rows[1:]
+            if any(
+                cell.strip()
+                for cell in row
+            )
+        ]
+
+        if not body:
+            return ""
 
         return "\n".join(
             [
-                "| " + " | ".join(header) + " |",
-                "| " + " | ".join(separator) + " |",
+                (
+                    "| "
+                    + " | ".join(header)
+                    + " |"
+                ),
+                (
+                    "| "
+                    + " | ".join(separator)
+                    + " |"
+                ),
                 *[
-                    "| " + " | ".join(row) + " |"
+                    (
+                        "| "
+                        + " | ".join(row)
+                        + " |"
+                    )
                     for row in body
-                    if any(cell and cell != "Not specified" for cell in row)
                 ],
             ]
         ).strip()
+
+    def _escape_table_cell(
+        self,
+        value: str,
+    ) -> str:
+        value = re.sub(
+            r"\r?\n",
+            "<br>",
+            value,
+        )
+
+        value = re.sub(
+            r"(?<!\\)\|",
+            r"\|",
+            value,
+        )
+
+        return value.strip()
+
+    def _extract_markdown_tables(
+        self,
+        text: str,
+    ) -> List[Dict[str, Any]]:
+        lines = text.splitlines()
+        tables: List[
+            Dict[str, Any]
+        ] = []
+        index = 0
+
+        while index < len(lines):
+            line = lines[index].strip()
+
+            if not self._is_markdown_table_line(
+                line,
+            ):
+                index += 1
+                continue
+
+            block: List[str] = []
+
+            while index < len(lines):
+                candidate = lines[
+                    index
+                ].strip()
+
+                if not self._is_markdown_table_line(
+                    candidate,
+                ):
+                    break
+
+                block.append(
+                    candidate
+                )
+                index += 1
+
+            if len(block) < 2:
+                continue
+
+            parsed_rows = [
+                self._split_markdown_table_row(
+                    row,
+                )
+                for row in block
+            ]
+
+            parsed_rows = [
+                row
+                for row in parsed_rows
+                if row
+            ]
+
+            if not parsed_rows:
+                continue
+
+            header = parsed_rows[0]
+            body_start = 1
+
+            if (
+                len(parsed_rows) > 1
+                and self._is_table_separator_row(
+                    parsed_rows[1]
+                )
+            ):
+                body_start = 2
+
+            body = [
+                row
+                for row in parsed_rows[
+                    body_start:
+                ]
+                if not self._is_table_separator_row(
+                    row
+                )
+            ]
+
+            if header and body:
+                tables.append(
+                    {
+                        "headers": header,
+                        "rows": body,
+                        "row_count": len(
+                            body
+                        ),
+                        "column_count": len(
+                            header
+                        ),
+                    }
+                )
+
+        return tables
+
+    def _split_markdown_table_row(
+        self,
+        line: str,
+    ) -> List[str]:
+        content = line.strip().strip(
+            "|"
+        )
+
+        if not content:
+            return []
+
+        placeholder = (
+            "LUMINATABLEPIPEPLACEHOLDER"
+        )
+
+        content = content.replace(
+            r"\|",
+            placeholder,
+        )
+
+        cells = [
+            self._clean_table_cell_for_data(
+                cell.replace(
+                    placeholder,
+                    " / ",
+                ).strip()
+            )
+            for cell in content.split(
+                "|"
+            )
+        ]
+
+        return cells
+
+    def _is_table_separator_row(
+        self,
+        cells: List[str],
+    ) -> bool:
+        return bool(
+            cells
+            and all(
+                re.fullmatch(
+                    r":?-{3,}:?",
+                    cell.replace(
+                        " ",
+                        "",
+                    ),
+                )
+                for cell in cells
+            )
+        )
+
+    def _clean_table_cell_for_data(
+        self,
+        value: str,
+    ) -> str:
+        cleaned = re.sub(
+            r"<br\s*/?>",
+            "\n",
+            value,
+            flags=re.IGNORECASE,
+        )
+
+        cleaned = re.sub(
+            r"\*\*(.*?)\*\*",
+            r"\1",
+            cleaned,
+        )
+
+        cleaned = re.sub(
+            r"`(.*?)`",
+            r"\1",
+            cleaned,
+        )
+
+        cleaned = cleaned.replace(
+            r"\|",
+            " / ",
+        )
+
+        cleaned = re.sub(
+            r"[ \t]{2,}",
+            " ",
+            cleaned,
+        )
+
+        return cleaned.strip()
 
     def _clean_markdown(
         self,
@@ -511,16 +1033,25 @@ class OutputFormatter:
         self,
         text: str,
     ) -> List[Dict[str, Any]]:
-
         lines = text.splitlines()
-
-        sections = []
+        sections: List[
+            Dict[str, Any]
+        ] = []
         current_section = None
 
         for line in lines:
             stripped = line.strip()
 
             if not stripped:
+                continue
+
+            if self._is_markdown_table_line(
+                stripped,
+            ):
+                if current_section:
+                    current_section[
+                        "content"
+                    ].append(stripped)
                 continue
 
             heading = None
@@ -537,11 +1068,19 @@ class OutputFormatter:
             )
 
             if markdown_heading:
-                heading = markdown_heading.group(2).strip()
-                level = len(markdown_heading.group(1))
+                heading = markdown_heading.group(
+                    2
+                ).strip()
+                level = len(
+                    markdown_heading.group(
+                        1
+                    )
+                )
 
             elif bold_heading:
-                heading = bold_heading.group(1).strip()
+                heading = bold_heading.group(
+                    1
+                ).strip()
                 level = 2
 
             if heading:
@@ -557,7 +1096,9 @@ class OutputFormatter:
 
             if heading:
                 if current_section:
-                    sections.append(current_section)
+                    sections.append(
+                        current_section
+                    )
 
                 current_section = {
                     "heading": heading,
@@ -565,12 +1106,15 @@ class OutputFormatter:
                     "content": [],
                 }
 
-            else:
-                if current_section:
-                    current_section["content"].append(stripped)
+            elif current_section:
+                current_section[
+                    "content"
+                ].append(stripped)
 
         if current_section:
-            sections.append(current_section)
+            sections.append(
+                current_section
+            )
 
         return self._remove_empty_or_duplicate_sections(
             sections,
@@ -663,34 +1207,116 @@ class OutputFormatter:
         text: str,
         sections: List[Dict[str, Any]],
     ) -> str:
+        # Backward-compatible helper.
+        return self._resolve_title(
+            markdown=text,
+            sections=sections,
+            task="",
+            structure={},
+        )
 
-        if sections:
-            return sections[0]["heading"]
-
-        lines = text.strip().splitlines()
-
-        if not lines:
-            return ""
-
-        first_line = lines[0]
-
-        first_line = re.sub(
-            r"[*#_`]",
-            "",
-            first_line,
+    def _resolve_title(
+        self,
+        *,
+        markdown: str,
+        sections: List[Dict[str, Any]],
+        task: str,
+        structure: Dict[str, Any],
+    ) -> str:
+        source_title = str(
+            structure.get(
+                "title",
+                "",
+            )
+            or ""
         ).strip()
 
-        return first_line[:120]
+        if source_title:
+            return self._clean_title(
+                source_title,
+            )
+
+        for line in markdown.splitlines():
+            stripped = line.strip()
+
+            if not stripped:
+                continue
+
+            if self._is_markdown_table_line(
+                stripped,
+            ):
+                continue
+
+            heading_match = re.match(
+                r"^#{1,6}\s+(.+)$",
+                stripped,
+            )
+
+            if heading_match:
+                return self._clean_title(
+                    heading_match.group(
+                        1
+                    )
+                )
+
+            break
+
+        if sections:
+            return self._clean_title(
+                str(
+                    sections[0].get(
+                        "heading",
+                        "",
+                    )
+                )
+            )
+
+        return self.TASK_DEFAULT_TITLES.get(
+            task,
+            "Generated Document",
+        )
+
+    def _clean_title(
+        self,
+        title: str,
+    ) -> str:
+        cleaned = re.sub(
+            r"[*#_`]",
+            "",
+            title or "",
+        )
+
+        cleaned = re.sub(
+            r"[!?]{1,4}$",
+            "",
+            cleaned,
+        )
+
+        return cleaned.strip()[:120]
+
+    def _is_markdown_table_line(
+        self,
+        line: str,
+    ) -> bool:
+        stripped = line.strip()
+
+        return (
+            stripped.startswith("|")
+            and stripped.endswith("|")
+            and stripped.count("|") >= 2
+        )
 
     def _markdown_to_plain_text(
         self,
         text: str,
     ) -> str:
+        # Keep <br> inside table cells until after markdown tables are parsed.
+        plain = text
 
         plain = re.sub(
             r"#{1,6}\s+",
             "",
-            text,
+            plain,
         )
 
         plain = re.sub(
@@ -700,16 +1326,41 @@ class OutputFormatter:
         )
 
         plain = re.sub(
-            r"\*(.*?)\*",
+            r"(?<!\*)\*(.*?)\*(?!\*)",
             r"\1",
             plain,
         )
 
-        plain = self._markdown_tables_to_plain_text(plain)
-
         plain = re.sub(
             r"`(.*?)`",
             r"\1",
+            plain,
+        )
+
+        plain = self._markdown_tables_to_plain_text(
+            plain,
+        )
+
+        plain = re.sub(
+            r"<br\s*/?>",
+            "\n",
+            plain,
+            flags=re.IGNORECASE,
+        )
+
+        plain = plain.replace(
+            r"\|\|",
+            " / ",
+        )
+
+        plain = plain.replace(
+            r"\|",
+            " / ",
+        )
+
+        plain = re.sub(
+            r"[ \t]+\n",
+            "\n",
             plain,
         )
 
@@ -726,53 +1377,94 @@ class OutputFormatter:
         text: str,
     ) -> str:
         lines = text.splitlines()
-        converted = []
+        converted: List[str] = []
+        index = 0
 
-        for line in lines:
-            stripped = line.strip()
+        while index < len(lines):
+            stripped = lines[
+                index
+            ].strip()
 
-            if stripped.startswith("|") and stripped.endswith("|"):
-                cells = [
-                    cell.strip()
-                    for cell in stripped.strip("|").split("|")
-                ]
-
-                if cells and all(re.fullmatch(r"[-:\s]+", cell) for cell in cells):
-                    continue
-
-                converted.append(" | ".join(cells))
+            if not self._is_markdown_table_line(
+                stripped,
+            ):
+                converted.append(
+                    lines[index]
+                )
+                index += 1
                 continue
 
-            converted.append(line)
+            block: List[str] = []
 
-        return "\n".join(converted)
+            while index < len(lines):
+                candidate = lines[
+                    index
+                ].strip()
+
+                if not self._is_markdown_table_line(
+                    candidate,
+                ):
+                    break
+
+                block.append(
+                    candidate
+                )
+                index += 1
+
+            rows = [
+                self._split_markdown_table_row(
+                    row
+                )
+                for row in block
+            ]
+
+            rows = [
+                row
+                for row in rows
+                if row
+                and not self._is_table_separator_row(
+                    row
+                )
+            ]
+
+            for row in rows:
+                converted.append(
+                    " | ".join(
+                        re.sub(
+                            r"\s*\n\s*",
+                            "; ",
+                            cell,
+                        ).strip()
+                        for cell in row
+                    )
+                )
+
+        return "\n".join(
+            converted
+        )
 
     def _detect_format(
         self,
         task: str,
     ) -> str:
-
         formats = {
             "important_notes": "study_notes",
             "revision_sheet": "revision_sheet",
             "flashcards": "flashcards",
             "mcqs": "mcqs",
             "qa_generation": "question_answers",
+            "answer_questions": "answers",
+            "beginner_explanation": "beginner_explanation",
             "short_summary": "summary",
             "bullet_summary": "bullet_summary",
+            "key_points": "key_points",
             "executive_summary": "executive_summary",
+            "main_points": "main_points",
             "meeting_minutes": "meeting_minutes",
             "action_items": "action_items",
             "structured_report": "structured_report",
             "table_format": "table",
             "email_draft": "email",
-            "mcqs": "mcqs",
-            "flashcards": "flashcards",
-            "qa_generation": "question_answers",
-            "answer_questions": "answers",
-            "beginner_explanation": "beginner_explanation",
-            "main_points": "main_points",
-            "key_points": "key_points",
             "simplify": "simplified_text",
             "clean_text": "clean_text",
         }

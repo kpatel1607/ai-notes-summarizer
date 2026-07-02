@@ -6,7 +6,14 @@ python-dotenv
 slowapi==0.1.9
 firebase-admin
 pymupdf
+paddleocr
+pdfplumber
 pillow
 pytesseract
 opencv-python-headless
 rapidocr-onnxruntime
+redis==5.0.8
+celery==5.4.0
+sentence-transformers
+docling
+

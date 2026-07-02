@@ -1,7 +1,7 @@
 import re
 import os
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image
 
@@ -12,6 +12,67 @@ except ImportError:
 
 
 class DocumentStructureParser:
+    """
+    General-purpose structure parser for OCR and extracted document text.
+
+    The parser is intentionally conservative: it detects structure without
+    rewriting document meaning or applying document-specific assumptions.
+    """
+
+    NUMBERED_ITEM_PATTERN = re.compile(
+        r"^\s*(\d{1,3})[.)]\s+(.+?)\s*$"
+    )
+    ROMAN_ITEM_PATTERN = re.compile(
+        r"^\s*((?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII))[.)]\s+(.+?)\s*$",
+        flags=re.IGNORECASE,
+    )
+    BULLET_PATTERN = re.compile(
+        r"^\s*[-•●▪■–—*]\s+(.+?)\s*$"
+    )
+    URL_EMAIL_PATTERN = re.compile(
+        r"https?://\S+|www\.\S+|\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b",
+        flags=re.IGNORECASE,
+    )
+    QUESTION_STARTERS = (
+        "what ", "why ", "when ", "where ", "who ", "whom ",
+        "whose ", "which ", "how ", "define ", "explain ",
+        "describe ", "calculate ", "prove ", "state ", "name ",
+        "discuss ", "list ", "compare ", "differentiate ", "draw ",
+    )
+
+    KEY_VALUE_LINE_PATTERN = re.compile(
+        r"""
+        ^\s*
+        ([A-Za-z][A-Za-z0-9 /&()_.\-]{1,60})
+        \s*
+        (?:::|:)
+        \s*
+        (.+?)
+        \s*$
+        """,
+        flags=re.VERBOSE,
+    )
+
+    TITLE_TERMS = {
+        "announcement",
+        "application",
+        "agreement",
+        "contract",
+        "exam",
+        "guideline",
+        "guidelines",
+        "hiring",
+        "invoice",
+        "minutes",
+        "notice",
+        "policy",
+        "receipt",
+        "report",
+        "schedule",
+        "syllabus",
+        "timetable",
+    }
+
     def __init__(self):
         self.pp_structure = None
         self.section_classifier = None
@@ -47,68 +108,95 @@ class DocumentStructureParser:
                 print(f"Structure classifier initialization failed: {e}")
                 self.section_classifier = None
 
-    def _is_valid_heading(self, line: str) -> bool:
-        line = line.strip()
 
-        if not line:
+    def _is_valid_heading(
+        self,
+        line: str,
+    ) -> bool:
+        stripped = line.strip()
+
+        if not stripped:
             return False
 
-        word_count = len(line.split())
-
-        if word_count > 10:
+        if len(stripped) > 120:
             return False
 
-        if len(line) > 80:
+        if len(stripped.split()) > 14:
             return False
 
-        if line.endswith((".", ",", ";", ":")):
+        if self.URL_EMAIL_PATTERN.search(
+            stripped,
+        ):
             return False
 
-        invalid_starts = ["1.", "2.", "3.", "4.", "5."]
+        if "|" in stripped and stripped.count("|") >= 2:
+            return False
 
-        lower = line.lower().strip()
+        if "\t" in stripped:
+            return False
 
-        for start in invalid_starts:
-            if lower.startswith(start):
-                if any(
-                    keyword in lower
-                    for keyword in [
-                        "table",
-                        "figure",
-                        "spacing",
-                        "paragraph",
-                        "alignment",
-                    ]
-                ):
-                    return False
+        if self.BULLET_PATTERN.match(
+            stripped,
+        ):
+            return False
 
-        invalid_keywords = [
-            "font",
-            "spacing",
-            "alignment",
-            "margin",
-            "margins",
-            "numbering",
-            "bottom",
-            "top",
-            "corner",
-            "page number",
-            "times new roman",
-        ]
+        if self.NUMBERED_ITEM_PATTERN.match(
+            stripped,
+        ):
+            return False
 
-        invalid_count = sum(
-            1
-            for keyword in invalid_keywords
-            if keyword in lower
+        if self.ROMAN_ITEM_PATTERN.match(
+            stripped,
+        ):
+            return False
+
+        if self.KEY_VALUE_LINE_PATTERN.match(
+            stripped,
+        ):
+            return False
+
+        if stripped.endswith(
+            (".", ",", ";")
+        ):
+            return False
+
+        if re.search(
+            r"\d+\.\s*\d+",
+            stripped,
+        ):
+            return False
+
+        alpha_words = re.findall(
+            r"[A-Za-z]+",
+            stripped,
         )
 
-        if invalid_count >= 1:
-            return False
+        uppercase_words = sum(
+            1
+            for word in alpha_words
+            if word.isupper()
+            and len(word) > 1
+        )
 
-        if len(re.findall(r"\d+\.\s*\d+", line)) >= 1:
-            return False
+        lower = stripped.lower()
 
-        return True
+        has_title_term = any(
+            term in lower
+            for term in self.TITLE_TERMS
+        )
+
+        return bool(
+            stripped.endswith(":")
+            or stripped.isupper()
+            or stripped.istitle()
+            or uppercase_words >= 1
+            or has_title_term
+            or re.match(
+                r"^(?:Chapter|Unit|Section)\s+\d+",
+                stripped,
+                flags=re.IGNORECASE,
+            )
+        )
 
     def remove_repeated_page_noise(
         self,
@@ -212,9 +300,6 @@ class DocumentStructureParser:
             "copyright",
             "confidential",
             "draft",
-            "university",
-            "college",
-            "institute",
             "www.",
             "http",
         ]
@@ -246,28 +331,129 @@ class DocumentStructureParser:
 
         if not lines:
             return {
+                "parser_type": (
+                    "transformer_assisted_text_parser"
+                    if self.section_classifier is not None
+                    else "rule_based_text_parser"
+                ),
                 "title": "",
                 "sections": [],
+                "section_labels": [],
                 "questions": [],
                 "bullets": [],
                 "numbered_items": [],
                 "roman_items": [],
                 "key_value_fields": [],
+                "tables": [],
+                "links": [],
+                "contact_lines": [],
                 "paragraphs": [],
                 "layout_blocks": [],
-                "metadata": {},
+                "structural_signals": {
+                    "has_sections": False,
+                    "has_questions": False,
+                    "has_bullets": False,
+                    "has_numbered_items": False,
+                    "has_roman_items": False,
+                    "has_key_value_fields": False,
+                    "has_tables": False,
+                    "has_paragraphs": False,
+                    "structural_confidence": 0.0,
+                },
+                "metadata": {
+                    "line_count": 0,
+                    "section_count": 0,
+                    "question_count": 0,
+                    "bullet_count": 0,
+                    "numbered_item_count": 0,
+                    "roman_item_count": 0,
+                    "key_value_count": 0,
+                    "table_count": 0,
+                    "link_count": 0,
+                    "contact_line_count": 0,
+                    "paragraph_count": 0,
+                    "layout_block_count": 0,
+                    "noise_removed": noise_result["noise_removed"],
+                    "removed_noise_count": len(noise_result["removed_noise"]),
+                    "removed_noise": noise_result["removed_noise"][:10],
+                    "structural_confidence": 0.0,
+                },
             }
 
         title = self._detect_title(lines)
         sections = self._detect_sections(lines)
+
+        if title:
+            normalized_title = re.sub(
+                r"[!?]{1,4}$",
+                "",
+                title,
+            ).strip().lower()
+
+            filtered_sections = []
+
+            for section in sections:
+                normalized_heading = re.sub(
+                    r"[!?]{1,4}$",
+                    "",
+                    str(
+                        section.get(
+                            "heading",
+                            "",
+                        )
+                    ),
+                ).strip().lower()
+
+                if (
+                    normalized_heading == normalized_title
+                    and not section.get(
+                        "content",
+                        [],
+                    )
+                ):
+                    continue
+
+                filtered_sections.append(
+                    section
+                )
+
+            sections = filtered_sections
+
         questions = self._detect_questions(lines)
+
+        section_headings = {
+            str(section.get("heading", "")).strip().lower()
+            for section in sections
+            if str(section.get("heading", "")).strip()
+        }
+
+        questions = [
+            question
+            for question in questions
+            if question.strip().lower()
+            not in section_headings
+        ]
+
         bullets = self._detect_bullets(lines)
         numbered_items = self._detect_numbered_items(normalized_text)
         roman_items = self._detect_roman_items(normalized_text)
         key_value_fields = self._detect_key_value_fields(normalized_text)
         paragraphs = self._detect_paragraphs(normalized_text)
         tables = self._detect_text_tables(normalized_text)
+        links = self._detect_links(normalized_text)
+        contact_lines = self._detect_contact_lines(lines)
         section_labels = self._classify_sections(sections, paragraphs)
+        structural_signals = self._build_structural_signals(
+            lines=lines,
+            sections=sections,
+            questions=questions,
+            bullets=bullets,
+            numbered_items=numbered_items,
+            roman_items=roman_items,
+            key_value_fields=key_value_fields,
+            tables=tables,
+            paragraphs=paragraphs,
+        )
 
         return {
             "parser_type": (
@@ -284,8 +470,11 @@ class DocumentStructureParser:
             "roman_items": roman_items,
             "key_value_fields": key_value_fields,
             "tables": tables,
+            "links": links,
+            "contact_lines": contact_lines,
             "paragraphs": paragraphs,
             "layout_blocks": [],
+            "structural_signals": structural_signals,
             "metadata": {
                 "line_count": len(lines),
                 "section_count": len(sections),
@@ -295,11 +484,16 @@ class DocumentStructureParser:
                 "roman_item_count": len(roman_items),
                 "key_value_count": len(key_value_fields),
                 "table_count": len(tables),
+                "link_count": len(links),
+                "contact_line_count": len(contact_lines),
                 "paragraph_count": len(paragraphs),
                 "layout_block_count": 0,
                 "noise_removed": noise_result["noise_removed"],
                 "removed_noise_count": len(noise_result["removed_noise"]),
                 "removed_noise": noise_result["removed_noise"][:10],
+                "structural_confidence": structural_signals[
+                    "structural_confidence"
+                ],
             },
         }
 
@@ -531,191 +725,556 @@ class DocumentStructureParser:
 
         return " ".join(extracted_lines).strip()
 
-    def _normalize_inline_headings(self, text: str) -> str:
+
+    def _normalize_inline_headings(
+        self,
+        text: str,
+    ) -> str:
         normalized = text
 
         normalized = re.sub(
-            r"\s+((?:Chapter|Unit|Section)\s+\d+[:.\-]?\s+[A-Z][A-Za-z0-9 ,:&\-]{4,90})",
+            r"\s+((?:Chapter|Unit|Section)\s+\d+[:.\-]?\s+[A-Z][A-Za-z0-9 ,:&()\-]{2,100})",
             r"\n\n\1",
             normalized,
             flags=re.IGNORECASE,
         )
 
+        # Only split genuine numbered items when punctuation follows the number.
         normalized = re.sub(
-            r"\s+(\d+\.\s+[A-Z][A-Za-z ,:&\-]{8,80})(?=\s+[A-Z])",
-            r"\n\n\1",
+            r"(?<!\S)(\d{1,3}[.)]\s+)",
+            r"\n\1",
             normalized,
         )
 
+        normalized = re.sub(
+            r"(?<!\S)((?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII)[.)]\s+)",
+            r"\n\1",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+
+        normalized = re.sub(
+            r"(?<!\S)[•●▪■]\s*",
+            "\n- ",
+            normalized,
+        )
+
+        normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+
         return normalized.strip()
 
-    def _detect_title(self, lines: List[str]) -> str:
+
+    def _detect_title(
+        self,
+        lines: List[str],
+    ) -> str:
         if not lines:
             return ""
 
-        first = lines[0].strip()
+        for index, candidate in enumerate(
+            lines[:4]
+        ):
+            display_candidate = candidate.strip()
 
-        word_count = len(first.split())
+            if not display_candidate:
+                continue
 
-        if word_count > 12:
-            return ""
+            candidate_for_validation = re.sub(
+                r"[!?]{1,4}$",
+                "",
+                display_candidate,
+            ).strip()
 
-        if first.endswith((".", "?", "!")):
-            return ""
+            if not candidate_for_validation:
+                continue
 
-        lowercase_ratio = (
-            sum(1 for c in first if c.islower())
-            / max(len(first), 1)
-        )
+            if candidate_for_validation.endswith("?"):
+                continue
 
-        if lowercase_ratio > 0.65:
-            return ""
+            if self.KEY_VALUE_LINE_PATTERN.match(
+                candidate_for_validation,
+            ):
+                continue
 
-        title_patterns = [
-            r"^(Chapter|Unit|Section)\s+\d+",
-            r"^[A-Z][A-Z0-9 /:&\-\(\)]{4,80}$",
-            r"^[A-Z][A-Za-z0-9 ,:&\-\(\)]{3,80}$",
-        ]
+            if self.URL_EMAIL_PATTERN.search(
+                candidate_for_validation,
+            ):
+                continue
 
-        for pattern in title_patterns:
-            if re.match(pattern, first):
-                return first
+            words = candidate_for_validation.split()
+
+            if not 1 <= len(words) <= 14:
+                continue
+
+            # The first line gets a slightly broader title test because OCR
+            # often loses font and alignment information.
+            if index == 0 and self._looks_like_document_title(
+                candidate_for_validation,
+            ):
+                return candidate_for_validation.rstrip(":")
+
+            if self._is_valid_heading(
+                candidate_for_validation,
+            ):
+                return candidate_for_validation.rstrip(":")
 
         return ""
+
+    def _looks_like_document_title(
+        self,
+        text: str,
+    ) -> bool:
+        stripped = text.strip()
+
+        if not stripped:
+            return False
+
+        if stripped.endswith(
+            (".", ",", ";")
+        ):
+            return False
+
+        words = stripped.split()
+
+        if not 1 <= len(words) <= 14:
+            return False
+
+        alpha_words = re.findall(
+            r"[A-Za-z]+",
+            stripped,
+        )
+
+        has_uppercase_emphasis = any(
+            word.isupper()
+            and len(word) > 2
+            for word in alpha_words
+        )
+
+        has_title_term = any(
+            term in stripped.lower()
+            for term in self.TITLE_TERMS
+        )
+
+        return bool(
+            stripped.isupper()
+            or stripped.istitle()
+            or has_uppercase_emphasis
+            or has_title_term
+        )
 
     def _detect_sections(
         self,
         lines: List[str],
     ) -> List[Dict[str, Any]]:
-        sections = []
-        current_section = None
-
-        heading_pattern = re.compile(
-            r"^((?:Chapter|Unit|Section)\s+\d+[:.\-]?\s+.+|[A-Z][A-Z /&\-]{4,80})$",
-            re.IGNORECASE,
-        )
-
-        numbered_heading_pattern = re.compile(
-            r"^\d+\.\s+[A-Z][A-Za-z ,:&\-]{8,80}$"
-        )
+        sections: List[Dict[str, Any]] = []
+        current_section: Optional[
+            Dict[str, Any]
+        ] = None
 
         for line in lines:
-            is_heading = (
-                (
-                    bool(heading_pattern.match(line))
-                    or bool(numbered_heading_pattern.match(line))
+            stripped = line.strip()
+
+            is_key_value = bool(
+                self.KEY_VALUE_LINE_PATTERN.match(
+                    stripped,
                 )
-                and self._is_valid_heading(line)
             )
+
+            is_heading = (
+                not is_key_value
+                and self._is_valid_heading(
+                    stripped,
+                )
+            )
+
+            if stripped.endswith("?"):
+                lower = stripped.lower()
+
+                is_heading = (
+                    not is_key_value
+                    and len(stripped.split()) <= 8
+                    and not self.NUMBERED_ITEM_PATTERN.match(
+                        stripped,
+                    )
+                    and not self.URL_EMAIL_PATTERN.search(
+                        stripped,
+                    )
+                    and not any(
+                        conjunction in lower
+                        for conjunction in (
+                            " and ",
+                            " but ",
+                            " while ",
+                            " because ",
+                        )
+                    )
+                )
 
             if is_heading:
                 if current_section:
-                    sections.append(current_section)
+                    sections.append(
+                        current_section
+                    )
 
                 current_section = {
-                    "heading": line,
+                    "heading": stripped.rstrip(":"),
                     "content": [],
                 }
+                continue
 
-            else:
-                if current_section:
-                    current_section["content"].append(line)
+            if current_section:
+                current_section[
+                    "content"
+                ].append(stripped)
 
         if current_section:
-            sections.append(current_section)
+            sections.append(
+                current_section
+            )
 
-        return sections
+        # Remove empty, low-information sections that are probably values or
+        # formatting artifacts rather than real headings.
+        cleaned_sections: List[
+            Dict[str, Any]
+        ] = []
+
+        for section in sections:
+            heading = str(
+                section.get(
+                    "heading",
+                    "",
+                )
+            ).strip()
+
+            content = [
+                str(item).strip()
+                for item in section.get(
+                    "content",
+                    [],
+                )
+                if str(item).strip()
+            ]
+
+            if not content:
+                continue
+
+            cleaned_sections.append(
+                {
+                    "heading": heading,
+                    "content": content,
+                }
+            )
+
+        return cleaned_sections
 
     def _detect_questions(
         self,
         lines: List[str],
     ) -> List[str]:
-        questions = []
-
-        question_pattern = re.compile(
-            r"^(q\d+\.?|question\s+\d+)",
-            re.IGNORECASE,
-        )
+        questions: List[str] = []
 
         for line in lines:
-            lower = line.lower()
-
-            if (
-                "?" in line
-                or question_pattern.match(line)
-                or lower.startswith(
-                    (
-                        "what ",
-                        "why ",
-                        "how ",
-                        "define ",
-                        "explain ",
-                        "describe ",
-                        "calculate ",
-                        "prove ",
-                    )
-                )
-            ):
-                questions.append(line)
+            if self._is_probable_question_item(line):
+                questions.append(line.strip())
 
         return questions
+
+    def _is_probable_question_item(
+        self,
+        line: str,
+    ) -> bool:
+        stripped = line.strip()
+
+        if not stripped:
+            return False
+
+        if self.URL_EMAIL_PATTERN.search(
+            stripped,
+        ):
+            return False
+
+        lower = stripped.lower()
+
+        numbered_match = self.NUMBERED_ITEM_PATTERN.match(
+            stripped,
+        )
+
+        if numbered_match:
+            body = numbered_match.group(
+                2
+            ).strip().lower()
+
+            return (
+                body.endswith("?")
+                or body.startswith(
+                    self.QUESTION_STARTERS
+                )
+            )
+
+        labelled_match = re.match(
+            r"^\s*q(?:uestion)?\.?\s*\d+[.)]?\s*(.+)$",
+            stripped,
+            flags=re.IGNORECASE,
+        )
+
+        if labelled_match:
+            body = labelled_match.group(
+                1
+            ).strip().lower()
+
+            return (
+                body.endswith("?")
+                or body.startswith(
+                    self.QUESTION_STARTERS
+                )
+            )
+
+        if not stripped.endswith("?"):
+            return False
+
+        # Unnumbered question-like lines can be section headings. Keep them as
+        # questions only when they look like actual requests rather than short
+        # navigation headings.
+        word_count = len(
+            stripped.split()
+        )
+
+        if word_count <= 4 and lower.startswith(
+            (
+                "who can ",
+                "what's ",
+                "what is included",
+                "what are the benefits",
+                "how does it work",
+            )
+        ):
+            return False
+
+        return lower.startswith(
+            self.QUESTION_STARTERS
+        )
 
     def _detect_bullets(
         self,
         lines: List[str],
     ) -> List[str]:
-        return [
-            line
-            for line in lines
-            if line.startswith(("-", "•", "*", "–"))
-        ]
+        bullets: List[str] = []
+
+        for line in lines:
+            match = self.BULLET_PATTERN.match(line)
+
+            if match:
+                bullets.append(match.group(1).strip())
+
+        return bullets
+
 
     def _detect_numbered_items(
         self,
         text: str,
     ) -> List[Dict[str, str]]:
-        pattern = re.compile(
-            r"(?<!\d)(\d{1,2})\s+([A-Z][A-Za-z /&\-]{3,60})\s+[–-]\s+(.+?)(?=\s+\d{1,2}\s+[A-Z][A-Za-z /&\-]{3,60}\s+[–-]|\Z)",
-            re.DOTALL,
+        items: List[Dict[str, str]] = []
+
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            match = self.NUMBERED_ITEM_PATTERN.match(line)
+
+            if not match:
+                continue
+
+            number = match.group(1).strip()
+            body = match.group(2).strip()
+            title, item_text = self._split_item_title_and_text(body)
+
+            items.append(
+                {
+                    "number": number,
+                    "title": title,
+                    "text": item_text,
+                }
+            )
+
+        return items
+
+    def _split_item_title_and_text(
+        self,
+        body: str,
+    ) -> Tuple[str, str]:
+        dash_match = re.match(
+            r"^(.{2,80}?)\s+[–—-]\s+(.+)$",
+            body,
         )
 
-        return [
-            {
-                "number": match.group(1).strip(),
-                "title": match.group(2).strip(),
-                "text": " ".join(match.group(3).split()),
-            }
-            for match in pattern.finditer(text)
-        ]
+        if dash_match:
+            return (
+                dash_match.group(1).strip(),
+                dash_match.group(2).strip(),
+            )
+
+        sentence_match = re.match(
+            r"^(.{2,80}?[.:?])\s+(.+)$",
+            body,
+        )
+
+        if sentence_match:
+            return (
+                sentence_match.group(1).strip(),
+                sentence_match.group(2).strip(),
+            )
+
+        return body[:80].strip(), ""
+
 
     def _detect_roman_items(
         self,
         text: str,
-    ) -> List[str]:
-        pattern = re.compile(
-            r"\b(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII)\.\s+[A-Z][A-Za-z’' /&\-]+"
-        )
+    ) -> List[Dict[str, str]]:
+        items: List[Dict[str, str]] = []
 
-        return [
-            match.group(0).strip()
-            for match in pattern.finditer(text)
-        ]
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            match = self.ROMAN_ITEM_PATTERN.match(line)
+
+            if not match:
+                continue
+
+            numeral = match.group(1).upper()
+            body = match.group(2).strip()
+            title, item_text = self._split_item_title_and_text(body)
+
+            items.append(
+                {
+                    "number": numeral,
+                    "title": title,
+                    "text": item_text,
+                }
+            )
+
+        return items
+
 
     def _detect_key_value_fields(
         self,
         text: str,
     ) -> List[Dict[str, str]]:
-        pattern = re.compile(
-            r"\b([A-Z][A-Z /-]{3,40})\s*:\s*([^:]{1,120})(?=\s+[A-Z][A-Z /-]{3,40}\s*:|\Z)"
+        fields: List[Dict[str, str]] = []
+        seen: set[Tuple[str, str]] = set()
+
+        line_pattern = self.KEY_VALUE_LINE_PATTERN
+
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+
+            if not line:
+                continue
+
+            match = line_pattern.match(line)
+
+            if not match:
+                continue
+
+            key = self._clean_field_key(match.group(1))
+            value = match.group(2).strip()
+
+            if not self._valid_key_value(key, value):
+                continue
+
+            pair = (key.lower(), value.lower())
+
+            if pair not in seen:
+                seen.add(pair)
+                fields.append({"key": key, "value": value})
+
+        inline_pattern = re.compile(
+            r"""
+            (?<!\w)
+            ([A-Za-z][A-Za-z0-9 /&()_.\-]{1,40})
+            [ \t]*
+            (?:::|:)
+            [ \t]*
+            (?![-•●▪■–—*])
+            ([^\n]+?)
+            (?=
+                [ \t]+
+                [A-Za-z][A-Za-z0-9 /&()_.\-]{1,40}
+                [ \t]*
+                (?:::|:)
+                |
+                \n
+                |
+                \Z
+            )
+            """,
+            flags=re.VERBOSE,
         )
 
-        return [
-            {
-                "key": match.group(1).strip(),
-                "value": " ".join(match.group(2).split()).strip(),
-            }
-            for match in pattern.finditer(text)
-        ]
+        for match in inline_pattern.finditer(text):
+            key = self._clean_field_key(match.group(1))
+            value = " ".join(match.group(2).split()).strip()
+
+            if not self._valid_key_value(key, value):
+                continue
+
+            pair = (key.lower(), value.lower())
+
+            if pair not in seen:
+                seen.add(pair)
+                fields.append({"key": key, "value": value})
+
+        return fields
+
+    def _clean_field_key(
+        self,
+        key: str,
+    ) -> str:
+        return re.sub(r"\s+", " ", key).strip(" -–—:|")
+
+    def _valid_key_value(
+        self,
+        key: str,
+        value: str,
+    ) -> bool:
+        if not key or not value:
+            return False
+
+        if len(key) > 45:
+            return False
+
+        if len(key.split()) > 6:
+            return False
+
+        if len(value) > 500:
+            return False
+
+        if self.URL_EMAIL_PATTERN.fullmatch(
+            key,
+        ):
+            return False
+
+        first_word = key.split()[0].lower()
+
+        if first_word in {
+            "join",
+            "click",
+            "visit",
+            "apply",
+            "submit",
+            "send",
+            "open",
+            "use",
+            "follow",
+            "download",
+            "upload",
+        }:
+            return False
+
+        if re.search(
+            r"[.!?]$",
+            key,
+        ):
+            return False
+
+        return True
 
     def _detect_paragraphs(
         self,
@@ -737,6 +1296,73 @@ class DocumentStructureParser:
             ]
 
         return paragraphs
+
+    def _detect_links(
+        self,
+        text: str,
+    ) -> List[str]:
+        links: List[str] = []
+        seen: set[str] = set()
+
+        for match in re.finditer(
+            r"https?://[^\s<>()]+|www\.[^\s<>()]+",
+            text,
+            flags=re.IGNORECASE,
+        ):
+            value = match.group(
+                0
+            ).rstrip(
+                ".,;:!?)]"
+            )
+
+            key = value.lower()
+
+            if key not in seen:
+                seen.add(key)
+                links.append(value)
+
+        return links
+
+    def _detect_contact_lines(
+        self,
+        lines: List[str],
+    ) -> List[str]:
+        contacts: List[str] = []
+
+        for line in lines:
+            stripped = line.strip()
+            lower = stripped.lower()
+
+            if not stripped:
+                continue
+
+            has_contact_signal = any(
+                signal in lower
+                for signal in (
+                    "contact",
+                    "email",
+                    "phone",
+                    "mobile",
+                    "whatsapp",
+                    "call",
+                )
+            )
+
+            has_machine_contact = bool(
+                re.search(
+                    r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b",
+                    stripped,
+                )
+                or re.search(
+                    r"(?<!\d)(?:\+?\d[\d ()-]{7,}\d)(?!\d)",
+                    stripped,
+                )
+            )
+
+            if has_contact_signal or has_machine_contact:
+                contacts.append(stripped)
+
+        return contacts
 
     def _detect_text_tables(
         self,
@@ -825,6 +1451,51 @@ class DocumentStructureParser:
 
         return rows if len(rows) >= 2 else []
 
+
+    def _build_structural_signals(
+        self,
+        *,
+        lines: List[str],
+        sections: List[Dict[str, Any]],
+        questions: List[str],
+        bullets: List[str],
+        numbered_items: List[Dict[str, str]],
+        roman_items: List[Dict[str, str]],
+        key_value_fields: List[Dict[str, str]],
+        tables: List[Dict[str, Any]],
+        paragraphs: List[str],
+    ) -> Dict[str, Any]:
+        signal_count = sum(
+            [
+                bool(sections),
+                bool(questions),
+                bool(bullets),
+                bool(numbered_items),
+                bool(roman_items),
+                bool(key_value_fields),
+                bool(tables),
+                bool(paragraphs),
+            ]
+        )
+
+        confidence = min(
+            1.0,
+            signal_count / 7.0
+            + min(len(lines), 20) / 120.0,
+        )
+
+        return {
+            "has_sections": bool(sections),
+            "has_questions": bool(questions),
+            "has_bullets": bool(bullets),
+            "has_numbered_items": bool(numbered_items),
+            "has_roman_items": bool(roman_items),
+            "has_key_value_fields": bool(key_value_fields),
+            "has_tables": bool(tables),
+            "has_paragraphs": bool(paragraphs),
+            "structural_confidence": round(confidence, 3),
+        }
+
     def _classify_sections(
         self,
         sections: List[Dict[str, Any]],
@@ -902,7 +1573,7 @@ class DocumentStructureParser:
         if "risk" in lower or "issue" in lower:
             return "risk"
 
-        if "?" in lower or lower.startswith(("what", "why", "how")):
+        if self._is_probable_question_item(text.strip()):
             return "question answer"
 
         if "conclusion" in lower:
