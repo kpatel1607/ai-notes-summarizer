@@ -1,10 +1,10 @@
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from model_systems.complex_document_extractor import ComplexDocumentExtractor
-from model_systems.digital_pdf_extractor import DigitalPDFExtractor
-from model_systems.image_ocr_extractor import ImageOCRExtractor
-from model_systems.scanned_pdf_extractor import ScannedPDFExtractor
+from model_systems.extraction.complex_document_extractor import ComplexDocumentExtractor
+from model_systems.extraction.digital_pdf_extractor import DigitalPDFExtractor
+from model_systems.extraction.image_ocr_extractor import ImageOCRExtractor
+from model_systems.extraction.scanned_pdf_extractor import ScannedPDFExtractor
 
 
 class ExtractionRouter:

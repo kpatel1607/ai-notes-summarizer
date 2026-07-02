@@ -1,7 +1,7 @@
 import os
 from typing import Any, Dict, Optional
 
-from model_systems.input_analyzer import InputAnalysis
+from model_systems.input.input_analyzer import InputAnalysis
 
 
 class FeatureExtractor:

@@ -8,7 +8,7 @@ import fitz
 from PIL import Image, ImageFilter, ImageOps
 import pytesseract
 
-from model_systems.extraction_router import ExtractionRouter
+from model_systems.extraction.extraction_router import ExtractionRouter
 
 try:
     from paddleocr import PaddleOCR

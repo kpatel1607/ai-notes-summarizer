@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 import fitz
 
-from model_systems.image_ocr_extractor import ImageOCRExtractor
+from model_systems.extraction.image_ocr_extractor import ImageOCRExtractor
 
 
 class ScannedPDFExtractor:

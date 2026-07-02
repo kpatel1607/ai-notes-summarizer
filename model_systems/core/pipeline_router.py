@@ -1,51 +1,51 @@
 from typing import Any, Dict, List
 
-from model_systems.input_understanding import (
+from model_systems.input.input_understanding import (
     InputUnderstandingSystem,
 )
-from model_systems.input_analyzer import (
+from model_systems.input.input_analyzer import (
     DocumentInputAnalyzer,
 )
-from model_systems.feature_extractor import (
+from model_systems.input.feature_extractor import (
     FeatureExtractor,
 )
-from model_systems.complexity_scorer import (
+from model_systems.input.complexity_scorer import (
     ComplexityScorer,
 )
-from model_systems.route_selector import (
+from model_systems.core.route_selector import (
     RouteSelector,
 )
-from model_systems.ocr_pipeline import (
+from model_systems.extraction.ocr_pipeline import (
     OCRPipeline,
 )
-from model_systems.text_cleanup_pipeline import (
+from model_systems.preprocessing.text_cleanup_pipeline import (
     TextCleanupPipeline,
 )
-from model_systems.document_structure_parser import (
+from model_systems.structure.document_structure_parser import (
     DocumentStructureParser,
 )
-from model_systems.mode_router import (
+from model_systems.core.mode_router import (
     ModeRouter,
 )
-from model_systems.prompt_builder import (
+from model_systems.generation.prompt_builder import (
     PromptBuilder,
 )
-from model_systems.semantic_chunker import (
+from model_systems.retrieval.semantic_chunker import (
     SemanticChunker,
 )
-from model_systems.generation_service import (
+from model_systems.generation.generation_service import (
     GenerationService,
 )
-from model_systems.smart_text_normalizer import (
+from model_systems.preprocessing.smart_text_normalizer import (
     SmartTextNormalizer,
 )
-from model_systems.semantic_preservation_filter import (
+from model_systems.preprocessing.semantic_preservation_filter import (
     SemanticPreservationFilter,
 )
-from model_systems.response_postprocessor import (
+from model_systems.generation.response_postprocessor import (
     ResponsePostprocessor,
 )
-from model_systems.output_formatter import (
+from model_systems.generation.output_formatter import (
     OutputFormatter,
 )
 
