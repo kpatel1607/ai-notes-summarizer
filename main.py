@@ -10,7 +10,13 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
+from fastapi.responses import (
+    JSONResponse,
+    HTMLResponse,
+    FileResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -1303,12 +1309,25 @@ def legal_page(
     title: str,
     subtitle: str,
     body: str,
+    *,
+    description: str,
+    canonical_path: str,
+    heading: str | None = None,
 ) -> str:
+    canonical_url = f"{BASE_URL}{canonical_path}"
+    page_heading = heading or title
+
     return f"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <title>{html.escape(title)}</title>
+    <meta name="description" content="{html.escape(description)}">
+    <link rel="canonical" href="{html.escape(canonical_url)}">
+    <meta property="og:title" content="{html.escape(title)}">
+    <meta property="og:description" content="{html.escape(description)}">
+    <meta property="og:url" content="{html.escape(canonical_url)}">
+    <meta property="og:type" content="website">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {site_styles()}
 </head>
@@ -1317,7 +1336,7 @@ def legal_page(
     <main class="legal-layout">
       <article class="legal-card">
         <span class="eyebrow">Lumina AI legal</span>
-        <h1>{html.escape(title)}</h1>
+        <h1>{html.escape(page_heading)}</h1>
         <p class="lead">{html.escape(subtitle)}</p>
         {body}
         <div class="footer">
@@ -1340,6 +1359,7 @@ def home():
 <head>
     <title>Lumina AI - AI Notes Summarizer</title>
     <meta name="description" content="Lumina AI converts notes, PDFs, scanned pages, and images into clean AI-powered summaries for study and productivity.">
+    <link rel="canonical" href="{BASE_URL}/">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {site_styles()}
 </head>
@@ -1434,6 +1454,133 @@ def health_check():
     }
 
 
+@app.get("/robots.txt", response_class=Response)
+def robots_txt():
+    content = f"""User-agent: *
+Allow: /
+Disallow: /v2/
+Disallow: /summarize
+Disallow: /docs
+Disallow: /redoc
+Disallow: /openapi.json
+
+Sitemap: {BASE_URL}/sitemap.xml
+"""
+
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+    )
+
+
+@app.get("/sitemap.xml", response_class=Response)
+def sitemap_xml():
+    public_paths = [
+        "/",
+        "/about",
+        "/contact",
+        "/download-app",
+        "/privacy-policy",
+        "/terms-and-conditions",
+    ]
+    today = "2026-07-03"
+    urls = "\n".join(
+        (
+            "  <url>\n"
+            f"    <loc>{html.escape(BASE_URL + path)}</loc>\n"
+            f"    <lastmod>{today}</lastmod>\n"
+            "    <changefreq>monthly</changefreq>\n"
+            "    <priority>0.7</priority>\n"
+            "  </url>"
+        )
+        for path in public_paths
+    )
+    content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+{urls}
+</urlset>
+"""
+
+    return Response(
+        content=content,
+        media_type="application/xml; charset=utf-8",
+    )
+
+
+@app.get("/privacy")
+def privacy_redirect():
+    return RedirectResponse(
+        url="/privacy-policy",
+        status_code=301,
+    )
+
+
+@app.get("/terms")
+def terms_redirect():
+    return RedirectResponse(
+        url="/terms-and-conditions",
+        status_code=301,
+    )
+
+
+@app.get("/about", response_class=HTMLResponse)
+def about_page():
+    body = """
+        <p>
+            Lumina AI is an AI-powered document intelligence and notes
+            summarization product for students, professionals, and general
+            productivity workflows.
+        </p>
+        <p>
+            The service helps turn text, PDFs, scanned pages, images, and camera
+            OCR results into structured outputs such as summaries, reports,
+            tables, meeting minutes, action items, flashcards, Q&A, email drafts,
+            study notes, and simplified explanations.
+        </p>
+        <p>
+            Public API and website routes are served from the Lumina AI domain,
+            while authenticated document processing, usage limits, and saved
+            workspace features are handled by the app and backend services.
+        </p>
+    """
+
+    return legal_page(
+        "About Lumina AI",
+        "AI document intelligence for study, work, and everyday clarity.",
+        body,
+        description=(
+            "Learn about Lumina AI, an AI-powered document intelligence and "
+            "notes summarization product for PDFs, scans, images, and text."
+        ),
+        canonical_path="/about",
+    )
+
+
+@app.get("/contact", response_class=HTMLResponse)
+def contact_page():
+    body = f"""
+        <p>
+            For Lumina AI support, privacy requests, grievance requests,
+            account questions, or legal-page feedback, contact the official
+            support address below.
+        </p>
+        <p>
+            Email: <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>
+        </p>
+    """
+
+    return legal_page(
+        "Contact Lumina AI",
+        "Support and privacy contact information.",
+        body,
+        description=(
+            "Contact Lumina AI for support, privacy requests, account questions, "
+            "and legal-page feedback."
+        ),
+        canonical_path="/contact",
+    )
+
+
 @app.get("/app-version")
 def app_version():
     return JSONResponse(
@@ -1486,6 +1633,7 @@ def download_app():
 <head>
     <title>Download Lumina AI</title>
     <meta name="description" content="Download the latest Lumina AI Android app.">
+    <link rel="canonical" href="{BASE_URL}/download-app">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {site_styles()}
 </head>
@@ -1562,45 +1710,58 @@ def update_app():
 @app.get("/privacy-policy", response_class=HTMLResponse)
 def privacy_policy():
     body = f"""
+        <p><strong>Effective Date:</strong> July 3, 2026</p>
+        <p><strong>Last Updated:</strong> July 3, 2026</p>
+
         <p>
-            Lumina AI respects user privacy and collects only the information
-            needed to provide authentication, AI summarization, saved document
-            history, folders, favorites, analytics, safety, and account support.
+            Lumina AI is an AI-powered document intelligence and notes
+            summarization service. This Privacy Policy explains how information
+            is collected, used, processed, and protected when users access the
+            Lumina AI app, website, backend API, APK/update pages, and related
+            services.
         </p>
 
         <div class="notice">
-            This policy is written for the Lumina AI app, backend API, policy
-            website, APK download page, and related Firebase-backed services.
+            This policy is intended to support clear privacy transparency,
+            including under applicable Indian data protection principles and the
+            Digital Personal Data Protection Act, 2023 where applicable. It does
+            not claim that every possible legal requirement is fully satisfied in
+            every jurisdiction.
         </div>
 
         <h2>Information We Collect</h2>
         <ul>
-            <li>Account information such as name, username, email address, profile photo URL, provider, email verification status, account creation date, and last login time.</li>
+            <li>Account information such as name, username, email address, user ID, profile photo URL, sign-in provider, email verification status, account creation date, last login time, recovery email where provided, and profile updates.</li>
             <li>Authentication information handled by Firebase Authentication, including email/password login, Google sign-in, verification email status, password reset flows, and session tokens.</li>
-            <li>Notes, pasted text, extracted PDF text, camera OCR text, uploaded image OCR text, selected AI mode, selected output task, generated summaries, markdown, plain text, sections, and word-count metadata.</li>
-            <li>Document organization data such as folders, favorites, document history, creation timestamps, and user-specific usage counters.</li>
-            <li>App diagnostics and analytics events such as app opens, crashes, performance errors, update prompts, and feature usage where Firebase Analytics or Crashlytics are enabled.</li>
-            <li>Technical request information such as IP-derived rate-limit data, request timing, API errors, and service health information needed to protect the backend.</li>
+            <li>User content such as pasted text, uploaded PDFs, uploaded images, camera scans, OCR text, extracted document text, selected AI mode, selected task, and AI-generated outputs.</li>
+            <li>Saved workspace information such as summaries, markdown, plain text, sections, folders, favorites, pinned status, document history, search tokens, timestamps, reading estimates, and user-specific usage counters.</li>
+            <li>Usage and routing information such as request counts, timestamps, task type, mode, processing route, model metadata, cache status, daily limit usage, feedback ratings, and processing diagnostics.</li>
+            <li>Device, browser, app, and diagnostic information such as app opens, crashes, errors, performance events, update prompts, and feature usage where Firebase Analytics or Crashlytics are enabled.</li>
+            <li>Technical security information such as IP-derived rate-limit data, request timing, API errors, service health information, and abuse-prevention signals.</li>
+            <li>Cookies, local storage, or similar local device storage may be used by the Flutter web/app runtime, Firebase, authentication flows, and local app preferences such as onboarding and appearance settings.</li>
         </ul>
 
         <h2>How We Use Information</h2>
         <ul>
             <li>To authenticate users and protect account access.</li>
-            <li>To extract text from images, camera scans, and PDFs on the device where supported.</li>
-            <li>To send notes and extracted text to the backend for AI summarization and formatting.</li>
-            <li>To save generated documents, folders, favorites, and usage limits to the user's account.</li>
+            <li>To extract text from images, camera scans, and PDFs using app-side and backend-side OCR/extraction features.</li>
+            <li>To process submitted text and extracted content with AI models and return summaries, tables, reports, notes, action items, flashcards, Q&A, email drafts, and other requested outputs.</li>
+            <li>To save generated documents, folders, favorites, profile settings, feedback, and usage limits to the user's account where those features are used.</li>
             <li>To detect crashes, measure reliability, prevent abuse, apply rate limits, and improve the product experience.</li>
-            <li>To notify users about important app updates and route them to the official download page.</li>
+            <li>To cache or reuse responses where configured, improve reliability, debug errors, operate job queues, and reduce repeated processing.</li>
+            <li>To communicate important service or update information when applicable.</li>
         </ul>
 
-        <h2>AI Processing</h2>
+        <h2>Uploaded Documents and AI Processing</h2>
         <p>
-            Text submitted for summarization may be processed by AI model providers
-            used by Lumina AI, including Gemini or compatible configured model
-            providers. Outputs can be inaccurate or incomplete, so users should
-            review important results before relying on them. Users should avoid
-            uploading highly sensitive, confidential, illegal, medical, legal,
-            financial, or restricted content unless they have the right to do so.
+            Users may upload or paste documents for processing. Uploaded content
+            and extracted text are processed to generate the requested output.
+            AI-generated outputs may not always be accurate, complete, current,
+            or suitable for a user's specific purpose. Users should review outputs
+            before relying on them and should not upload documents they do not
+            have the right to process. Users should avoid uploading highly
+            sensitive information unless it is necessary for their use of the
+            service.
         </p>
 
         <h2>Third-Party Services</h2>
@@ -1609,169 +1770,308 @@ def privacy_policy():
             <li>Cloud Firestore for user profiles, summaries, folders, favorites, and daily usage counters.</li>
             <li>Firebase App Check, Analytics, and Crashlytics for abuse protection, diagnostics, app-open analytics, and crash reports.</li>
             <li>Google sign-in where the user chooses Google authentication.</li>
-            <li>Google ML Kit or device OCR libraries for image/camera text recognition in the app.</li>
-            <li>Configured AI model providers for summarization and output generation.</li>
+            <li>Google Gemini or Google AI services for AI generation where configured by the backend.</li>
+            <li>Google ML Kit or device OCR libraries for image and camera text recognition in the app where supported.</li>
+            <li>Redis-compatible caching infrastructure where REDIS_URL is configured for exact response caching or queue support.</li>
+            <li>Hugging Face Spaces and Cloudflare Worker/proxy infrastructure where used to host or route the backend and public website.</li>
         </ul>
+        <p>
+            These providers may process data as needed to deliver authentication,
+            storage, analytics, crash reporting, hosting, OCR, caching, and AI
+            generation features.
+        </p>
+
+        <h2>Legal Basis and Lawful Use</h2>
+        <p>
+            Lumina AI processes information to provide the service requested by
+            users, operate accounts, generate AI outputs, maintain security,
+            enforce limits, prevent abuse, and support service reliability. Users
+            provide document content voluntarily when they paste, upload, scan, or
+            save content in the service.
+        </p>
 
         <h2>Data Retention</h2>
         <p>
-            Saved summaries, folders, favorites, and profile records are retained
-            while the account remains active. Users can delete individual documents
-            or delete their account from the Profile section. Usage logs and
-            diagnostic records may remain for a limited period where required for
-            security, fraud prevention, legal compliance, or service reliability.
+            Uploaded files handled by the backend are written to temporary storage
+            for processing and the backend code deletes those temporary files after
+            processing completes. Extracted text, generated summaries, folders,
+            favorites, profile records, usage counters, statistics, and saved
+            workspace data may be retained while the account remains active or
+            until deleted by the user where deletion features are available.
+            Cached/generated outputs may be stored temporarily where caching is
+            configured. Logs, diagnostic records, security records, and provider
+            records may be retained for a limited period where needed for service
+            operation, debugging, legal obligations, abuse prevention, or limit
+            enforcement.
         </p>
 
-        <h2>Data Security</h2>
+        <h2>Data Sharing</h2>
         <p>
-            Lumina AI uses account-based storage and user identifiers to keep saved
-            summaries separated between users. API requests require Firebase
-            authentication, the backend applies rate limits, and Firebase App Check
-            can be used to reduce unauthorized access. No online system can be
-            guaranteed completely secure. We do not sell user data.
+            Lumina AI does not sell user data. Information may be shared with
+            service providers that help operate authentication, storage, hosting,
+            analytics, crash reporting, OCR, caching, and AI generation. Data may
+            also be disclosed where required by law, to protect users or the
+            service, to investigate abuse or security issues, or with user consent.
         </p>
 
-        <h2>User Control</h2>
+        <h2>Security</h2>
+        <p>
+            Lumina AI uses reasonable technical and organizational safeguards for
+            the current service, including HTTPS for the public domain, Firebase
+            authentication, user-specific records, backend rate limits, App Check
+            where enabled, trusted host checks, upload size limits, and security
+            headers. No online system can be guaranteed completely secure.
+        </p>
+
+        <h2>User Rights and Choices</h2>
         <ul>
+            <li>Users may request access to information associated with their account.</li>
+            <li>Users may correct profile information supported by the app.</li>
             <li>Users may delete generated summaries and folders from inside the app.</li>
             <li>Users may reset passwords, update profile information, and manage sign-in methods supported by Firebase.</li>
             <li>Users may delete their account and associated saved data from the Profile section.</li>
-            <li>Users may contact support for privacy questions or deletion assistance.</li>
+            <li>Users may withdraw consent where applicable by stopping use of the service or requesting deletion, subject to data needed for security, legal, or operational reasons.</li>
+            <li>Users may contact support for privacy, deletion, grievance, or user-rights assistance.</li>
         </ul>
 
         <h2>Children's Privacy</h2>
         <p>
-            Lumina AI is intended for general study and productivity use. Children
-            should use the service only with appropriate parent, guardian, or school
-            permission where required by law.
+            Lumina AI is not intended for children below the legally relevant age
+            unless parental, guardian, or school consent is provided where required.
+            Lumina AI does not knowingly collect children's personal data without
+            appropriate consent.
         </p>
 
         <h2>International Processing</h2>
         <p>
-            Data may be processed by cloud providers and AI services in regions
-            outside the user's location, subject to those providers' safeguards and
-            terms.
+            Because Lumina AI uses providers such as Google/Firebase, Google AI
+            services, Hugging Face, Cloudflare, and Redis-compatible infrastructure
+            where configured, data may be processed in countries other than the
+            user's country depending on provider infrastructure.
         </p>
 
-        <h2>Contact</h2>
+        <h2>AI Output Disclaimer</h2>
         <p>
-            For privacy questions, contact:
+            Outputs are generated by AI and may contain mistakes, omissions,
+            formatting errors, or misleading interpretations. Users are
+            responsible for verifying outputs before academic, professional,
+            legal, medical, financial, or other important use.
+        </p>
+
+        <h2>Changes to This Policy</h2>
+        <p>
+            This Privacy Policy may be updated as Lumina AI changes. The Last
+            Updated date will be changed when material updates are made.
+        </p>
+
+        <h2>Contact and Grievance Requests</h2>
+        <p>
+            For privacy questions, grievance requests, user-rights requests, or
+            deletion assistance, contact:
             <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>
         </p>
     """
 
     return legal_page(
-        "Privacy Policy",
-        "Last updated: 2026",
+        "Privacy Policy | Lumina AI",
+        "Learn how Lumina AI collects, uses, protects, and processes information.",
         body,
+        description=(
+            "Learn how Lumina AI collects, uses, protects, and processes "
+            "information when users access AI-powered document summarization "
+            "and document intelligence tools."
+        ),
+        canonical_path="/privacy-policy",
+        heading="Privacy Policy",
     )
 
 
 @app.get("/terms-and-conditions", response_class=HTMLResponse)
 def terms_and_conditions():
     body = f"""
+        <p><strong>Effective Date:</strong> July 3, 2026</p>
+        <p><strong>Last Updated:</strong> July 3, 2026</p>
+
         <p>
-            By using Lumina AI, you agree to these Terms & Conditions.
-            If you do not agree, please do not use the app.
+            By accessing or using Lumina AI, you agree to these Terms and
+            Conditions. If you do not agree, please do not use the service.
         </p>
 
-        <h2>Use of Service</h2>
+        <h2>Description of Service</h2>
         <p>
-            Lumina AI provides tools for OCR-based note extraction, AI-powered
-            summarization, study note generation, and productivity support.
+            Lumina AI provides AI-powered document summarization, OCR-assisted
+            extraction, document cleanup, and structured output tools. Depending
+            on the selected mode and task, the service may generate summaries,
+            tables, professional reports, meeting minutes, action items, email
+            drafts, study notes, flashcards, Q&A, revision sheets, simplified
+            explanations, and related document intelligence outputs.
         </p>
 
-        <h2>User Responsibilities</h2>
+        <h2>Eligibility</h2>
+        <p>
+            Users must be legally able to use the service. Minors should use
+            Lumina AI only with parent, guardian, or school consent where required
+            by applicable law.
+        </p>
+
+        <h2>User Accounts</h2>
+        <p>
+            Lumina AI supports account-based features through Firebase
+            Authentication and related services. Users are responsible for
+            providing accurate account information, keeping credentials secure,
+            maintaining control of their devices, and reporting suspected misuse
+            of their account.
+        </p>
+
+        <h2>User Content</h2>
+        <p>
+            Users retain rights they already have in documents, text, images,
+            scans, and other content they upload, paste, or save. Users grant
+            Lumina AI a limited permission to process that content only as needed
+            to provide the requested service, including extraction, OCR,
+            generation, saving, caching where configured, debugging, security,
+            and usage-limit enforcement.
+        </p>
         <ul>
-            <li>Users must not upload illegal, harmful, abusive, or infringing content.</li>
-            <li>Users are responsible for the content they upload or paste.</li>
             <li>Users must have the right to upload, process, summarize, or store the documents they submit.</li>
-            <li>Users must not attempt to bypass rate limits, abuse backend APIs, reverse engineer protected services, or disrupt Lumina AI infrastructure.</li>
-            <li>Users should verify important academic, legal, medical, or professional information independently.</li>
+            <li>Users must not upload illegal, harmful, abusive, infringing, privacy-invasive, malicious, or unauthorized third-party content.</li>
+            <li>Users must not upload malware or content designed to disrupt Lumina AI or another user's device, account, or data.</li>
+            <li>Users are responsible for reviewing whether confidential, personal, regulated, academic, or workplace documents may be processed through the service.</li>
         </ul>
 
-        <h2>AI Generated Content</h2>
+        <h2>AI Outputs</h2>
         <p>
-            AI-generated summaries may contain mistakes, omissions, or imperfect
-            interpretations. Lumina AI is a study assistant, not a replacement for
-            professional, academic, legal, or medical advice.
+            Outputs are generated automatically by AI systems and may be
+            inaccurate, incomplete, outdated, misformatted, or unsuitable for a
+            particular purpose. Users must verify important outputs before relying
+            on them. Lumina AI is not a substitute for legal, medical, financial,
+            academic-integrity, or other professional advice.
         </p>
 
-        <h2>Accounts and Security</h2>
+        <h2>Acceptable Use</h2>
+        <ul>
+            <li>Do not use Lumina AI for illegal, harmful, deceptive, abusive, or infringing activity.</li>
+            <li>Do not violate another person's privacy, intellectual property, confidentiality, or data rights.</li>
+            <li>Do not attempt to access another user's account, documents, saved data, jobs, or usage records.</li>
+            <li>Do not bypass rate limits, daily limits, file limits, authentication, App Check, security controls, or abuse-prevention systems.</li>
+            <li>Do not scrape, overload, spam, probe, reverse engineer protected service behavior, or automate abusive requests against the app, API, or website.</li>
+            <li>Do not upload malware, exploit payloads, or content intended to damage systems or interfere with service operation.</li>
+        </ul>
+
+        <h2>Plans, Limits, and Availability</h2>
         <p>
-            Users are responsible for maintaining account security, using accurate
-            sign-in information, and protecting devices where Lumina AI is installed.
-            Password reset, email verification, and recovery email records depend
-            on Firebase and platform availability.
+            Lumina AI may offer free or limited-access features. The backend code
+            includes daily generation limits, rate limits, upload size limits,
+            endpoint limits, PDF page checks, and heavy-processing safeguards.
+            Current default backend settings include a 15 MB upload limit, a daily
+            free generation limit configured by the service, and OCR/PDF limits
+            that may vary by deployment. The service may be changed, paused,
+            limited, or made unavailable for maintenance, safety, abuse
+            prevention, cost control, provider outages, quota limits, or technical
+            reasons.
         </p>
 
-        <h2>Account Security</h2>
+        <h2>Payments and Refunds</h2>
         <p>
-            Users are responsible for maintaining the confidentiality of their login
-            credentials and account access.
-        </p>
-
-        <h2>Data Deletion</h2>
-        <p>
-            Users may delete their account and associated saved data from the app's
-            Profile section. Some third-party providers may retain limited records
-            according to their own policies.
-        </p>
-
-        <h2>Downloads and Updates</h2>
-        <p>
-            Lumina AI may provide update notices through the app and an official
-            download page. Users should install updates only from Lumina AI's
-            official website or official app-store listing when available. APK
-            installation may require Android device permissions controlled by the
-            operating system.
-        </p>
-
-        <h2>Free Limits and Fair Use</h2>
-        <p>
-            Lumina AI may apply daily generation limits, request limits, and other
-            safeguards to keep the service reliable. Limits may change as the app
-            evolves.
+            Currently, Lumina AI may offer free or limited-access features. Paid
+            plans, if introduced later, will be governed by additional payment
+            terms. No pricing, refund, subscription, or billing promise is made in
+            these Terms unless a separate paid-plan policy is published.
         </p>
 
         <h2>Intellectual Property</h2>
         <p>
-            Lumina AI, its branding, app design, backend, and website are owned by
-            their respective rights holders. Users retain responsibility for their
-            uploaded content and must respect third-party copyrights.
+            Lumina AI branding, website content, app interface, backend code,
+            design elements, and service features are owned by their respective
+            rights holders. User content remains the user's responsibility. These
+            Terms do not give Lumina AI ownership of user documents beyond the
+            limited processing permission described above.
         </p>
 
-        <h2>Disclaimer and Liability</h2>
+        <h2>Third-Party Services</h2>
         <p>
-            Lumina AI is provided on an "as available" basis. To the maximum extent
-            permitted by law, Lumina AI is not liable for losses arising from
-            inaccurate AI outputs, user-submitted content, service interruptions,
-            third-party services, or unsupported device configurations.
+            Lumina AI relies on third-party services for parts of the product,
+            including Firebase authentication and storage, Google sign-in, Google
+            Gemini or Google AI services, Google/Firebase analytics and crash
+            diagnostics, OCR-related libraries or services, Redis-compatible
+            caching where configured, Hugging Face hosting, and Cloudflare proxy
+            infrastructure. Those services may be subject to their own terms,
+            policies, availability, and technical limits.
         </p>
 
-        <h2>Availability</h2>
+        <h2>Privacy</h2>
         <p>
-            Lumina AI may occasionally be unavailable due to maintenance, third-party
-            service issues, or technical limitations.
+            Use of Lumina AI is also governed by the
+            <a href="/privacy-policy">Privacy Policy</a>.
+        </p>
+
+        <h2>Suspension or Termination</h2>
+        <p>
+            Access may be suspended, limited, or terminated if a user violates
+            these Terms, creates a security risk, attempts abuse, exceeds fair-use
+            boundaries, interferes with the service, or where action is required
+            for legal, safety, provider, or operational reasons.
+        </p>
+
+        <h2>Disclaimers</h2>
+        <p>
+            Lumina AI is provided on an "as is" and "as available" basis. Lumina
+            AI does not guarantee uninterrupted service, error-free operation,
+            indexing by search engines, perfect OCR, complete extraction,
+            accurate AI output, or suitability for any specific academic,
+            professional, legal, medical, financial, or business purpose.
+        </p>
+
+        <h2>Limitation of Liability</h2>
+        <p>
+            To the maximum extent permitted by applicable law, Lumina AI and its
+            operators are not liable for indirect, incidental, consequential,
+            special, punitive, or similar losses, or for losses arising from user
+            content, AI output errors, third-party services, service downtime,
+            account misuse, unsupported devices, or reliance on generated content.
+            Nothing in these Terms limits liability where doing so is not allowed
+            by applicable law.
+        </p>
+
+        <h2>Indemnity</h2>
+        <p>
+            Users agree to be responsible for claims, losses, liabilities, damages,
+            costs, and expenses arising from their misuse of Lumina AI, unlawful
+            content, infringement of third-party rights, violation of privacy or
+            confidentiality obligations, or violation of these Terms.
         </p>
 
         <h2>Changes to Terms</h2>
         <p>
-            We may update these terms as the app evolves. Continued use of Lumina AI
-            means you accept the latest version of these terms.
+            These Terms may be updated as Lumina AI changes. The Last Updated date
+            will be changed when material updates are made. Continued use of the
+            service after updates means the user accepts the updated Terms.
+        </p>
+
+        <h2>Governing Law</h2>
+        <p>
+            These Terms are intended to be governed by the laws of India, unless
+            another jurisdiction is required by applicable law.
         </p>
 
         <h2>Contact</h2>
         <p>
-            For questions, contact:
+            For support, legal, terms, privacy, or grievance questions, contact:
             <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>
         </p>
     """
 
     return legal_page(
-        "Terms & Conditions",
-        "Last updated: 2026",
+        "Terms and Conditions | Lumina AI",
+        "Read the terms that govern use of Lumina AI.",
         body,
+        description=(
+            "Read the terms that govern use of Lumina AI, including user "
+            "content, AI-generated outputs, acceptable use, service limits, "
+            "and disclaimers."
+        ),
+        canonical_path="/terms-and-conditions",
+        heading="Terms and Conditions",
     )
 
 

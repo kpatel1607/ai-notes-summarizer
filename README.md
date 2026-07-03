@@ -580,8 +580,14 @@ GET  /app-version
 GET  /download-apk
 GET  /download-app
 GET  /update
+GET  /about
+GET  /contact
 GET  /privacy-policy
 GET  /terms-and-conditions
+GET  /privacy
+GET  /terms
+GET  /robots.txt
+GET  /sitemap.xml
 POST /v2/generate
 POST /v2/jobs/generate
 GET  /v2/jobs/{job_id}
@@ -589,6 +595,12 @@ POST /v2/feedback
 POST /v2/generate-file
 POST /summarize
 ```
+
+`/privacy-policy` and `/terms-and-conditions` are the canonical legal routes.
+`/privacy` and `/terms` redirect to those canonical pages to avoid duplicate
+indexed legal content. `/robots.txt` allows public pages while excluding private
+API/document-processing routes, and `/sitemap.xml` lists only canonical public
+URLs.
 
 `/v2/generate` is the main authenticated text-generation route. `/v2/generate-file` supports backend-side file extraction. `/summarize` is retained for legacy compatibility.
 

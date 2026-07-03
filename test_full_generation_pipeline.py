@@ -1,16 +1,16 @@
 from pprint import pprint
 from typing import Any, Dict
 
-from model_systems.text_cleanup_pipeline import TextCleanupPipeline
-from model_systems.smart_text_normalizer import SmartTextNormalizer
-from model_systems.semantic_preservation_filter import SemanticPreservationFilter
-from model_systems.document_structure_parser import DocumentStructureParser
-from model_systems.semantic_chunker import SemanticChunker
-from model_systems.mode_router import ModeRouter
-from model_systems.prompt_builder import PromptBuilder
-from model_systems.generation_service import GenerationService
-from model_systems.response_postprocessor import ResponsePostprocessor
-from model_systems.output_formatter import OutputFormatter
+from model_systems.preprocessing.text_cleanup_pipeline import TextCleanupPipeline
+from model_systems.preprocessing.smart_text_normalizer import SmartTextNormalizer
+from model_systems.preprocessing.semantic_preservation_filter import SemanticPreservationFilter
+from model_systems.structure.document_structure_parser import DocumentStructureParser
+from model_systems.retrieval.semantic_chunker import SemanticChunker
+from model_systems.core.mode_router import ModeRouter
+from model_systems.generation.prompt_builder import PromptBuilder
+from model_systems.generation.generation_service import GenerationService
+from model_systems.generation.response_postprocessor import ResponsePostprocessor
+from model_systems.generation.output_formatter import OutputFormatter
 
 
 SAMPLE_TEXT = """

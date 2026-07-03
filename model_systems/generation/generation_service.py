@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from requests import Timeout
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 load_dotenv(
     BASE_DIR / ".env"
